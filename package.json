@@ -38,6 +38,7 @@
   "dependencies": {
     "@mtproto/core": "^5.3.0",
     "npm-run-all2": "^6.0.6",
+    "postybirb-plus": "file:",
     "prettier": "^3.0.1",
     "rimraf": "^5.0.1",
     "shx": "^0.3.4",

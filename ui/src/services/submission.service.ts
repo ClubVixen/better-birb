@@ -2,7 +2,7 @@ import { FileRecord } from 'postybirb-commons';
 import { SubmissionCreate } from 'postybirb-commons';
 import { SubmissionImportResult } from 'postybirb-commons';
 import { SubmissionOverwrite } from 'postybirb-commons';
-import { SubmissionPackage } from 'postybirb-commons';
+import { Submission, SubmissionPackage } from 'postybirb-commons';
 import { SubmissionUpdate } from 'postybirb-commons';
 import { SubmissionLog } from 'postybirb-commons';
 import { Problems } from 'postybirb-commons';
@@ -88,7 +88,28 @@ export default class SubmissionService {
   static changeOrder(id: string, to: number, from: number) {
     return axios.post('/submission/changeOrder', { id, to, from });
   }
-
+  
+  static async getScheduledSubmissions(): Promise<SubmissionPackage<Submission>[]> {
+    try {
+      console.log("Fetching scheduled submissions from the database...");
+      const response = await this.getSubmissions(true);
+      console.log("Raw response from database:", response.data);
+  
+      const scheduledSubmissions = response.data.filter(
+        (submission: SubmissionPackage<Submission>) => submission.submission.schedule?.postAt
+      );
+  
+      console.log("Filtered scheduled submissions with postAt:", scheduledSubmissions);
+      return scheduledSubmissions;
+    } catch (error) {
+      console.error('Error fetching scheduled submissions:', error);
+      return [];
+    }
+  }
+  
+  
+  
+  
   static setPostAt(id: string, postAt: number | undefined) {
     return axios.patch(`/submission/set/postAt/${id}`, { postAt });
   }

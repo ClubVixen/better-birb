@@ -7,10 +7,12 @@ import { SubmissionStore } from '../../stores/submission.store';
 import { inject, observer } from 'mobx-react';
 import { SubmissionType } from 'postybirb-commons';
 import { Match, Location } from 'react-router-dom';
-import { Tabs, Badge } from 'antd';
+import { Tabs, Badge, Select } from 'antd';
 import ScheduledSubmissions from './scheduled-submissions/ScheduledSubmissions';
 import { uiStore } from '../../stores/ui.store';
 import SubmissionQueue from './SubmissionQueue';
+
+const { Option } = Select;
 
 interface Props {
   submissionStore?: SubmissionStore;
@@ -19,15 +21,24 @@ interface Props {
   history: any;
 }
 
+interface State {
+  selectedSite: string | null;
+}
+
 @inject('submissionStore')
 @observer
-export default class SubmissionView extends React.Component<Props> {
+export default class SubmissionView extends React.Component<Props, State> {
   type: SubmissionType = SubmissionType.FILE;
   defaultKey: string = 'submissions';
 
   constructor(props: Props) {
     super(props);
     uiStore.setActiveNav('update'); // force an update
+
+    this.state = {
+      selectedSite: null, // Initialize the selected site state
+    };
+
     switch (props.match.path.split('/').pop()) {
       case SubmissionType.FILE:
         this.type = SubmissionType.FILE;
@@ -37,8 +48,6 @@ export default class SubmissionView extends React.Component<Props> {
         break;
     }
 
-    // Don't like doing it like this, but router is being weird.
-    // Will need to change if hash routing is ever changed.
     const hashPart = location.hash.split('/').pop(); // eslint-disable-line no-restricted-globals
     if (hashPart === this.type) {
       this.defaultKey = 'submissions';
@@ -57,7 +66,13 @@ export default class SubmissionView extends React.Component<Props> {
     });
   }
 
+  handleSiteChange = (value: string) => {
+    this.setState({ selectedSite: value });
+  };
+
   render() {
+    const { selectedSite } = this.state;
+
     const submissions =
       this.type === SubmissionType.FILE
         ? this.props.submissionStore!.fileSubmissions
@@ -69,7 +84,10 @@ export default class SubmissionView extends React.Component<Props> {
 
     const scheduledSubmissions = submissions.filter(
       s => !s.submission.isPosting && !s.submission.isQueued && s.submission.schedule.isScheduled
-    );
+    ).filter(s => {
+      const partsArray = Object.values(s.parts || {}); // Convert parts object to an array
+      return !selectedSite || partsArray.some(part => part.website === selectedSite);
+    }); // Use the `website` property
 
     const queuedSubmissions = submissions.filter(
       s => s.submission.isPosting || s.submission.isQueued
@@ -112,6 +130,26 @@ export default class SubmissionView extends React.Component<Props> {
           key="scheduled"
         >
           <div className="scheduled-view">
+            {/* Add a dropdown to filter by site */}
+            <Select
+              placeholder="Filter by Site"
+              onChange={this.handleSiteChange}
+              style={{ width: 200, marginBottom: 16 }}
+              allowClear
+            >
+              {/* Populate with available sites */}
+              {_.uniq(
+                submissions.flatMap(s => {
+                  const partsArray = Object.values(s.parts || {}); // Convert parts object to an array
+                  return partsArray.map(part => part.website);
+                })
+              ).map(site => (
+                <Option key={site} value={site}>
+                  {site}
+                </Option>
+              ))}
+            </Select>
+
             <ScheduledSubmissions submissions={scheduledSubmissions} />
           </div>
         </Tabs.TabPane>

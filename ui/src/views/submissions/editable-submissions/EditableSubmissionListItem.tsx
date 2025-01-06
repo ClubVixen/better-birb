@@ -7,10 +7,13 @@ import {
   message,
   Modal,
   Popconfirm,
-  Typography
+  Typography,
+  Checkbox,
+  Radio,
+  Button
 } from 'antd';
 import moment from 'moment';
-import React from 'react';
+//import React from 'react';
 import { Draggable, DraggableProvided } from 'react-beautiful-dnd';
 import { Link } from 'react-router-dom';
 import { FileSubmission } from 'postybirb-commons';
@@ -24,26 +27,46 @@ import SubmissionUtil from '../../../utils/submission.util';
 import { WebsiteRegistry } from '../../../websites/website-registry';
 import { IssueState } from './IssueState';
 import { scrollSubmissionStore } from '../../../stores/scroll-submission.store';
+import { submissionStore } from '../../../stores/submission.store';
+import React from 'react';
 
+interface MyFileInfo {
+  previewPath?: string;
+  fullPath?: string;
+  // anything else
+}
+interface MyFileSubmission extends FileSubmission {
+  fileInfo?: MyFileInfo;
+}
 interface ListItemProps {
   item: SubmissionPackage<Submission>;
+  totalItems: number;
+  autoTaggingResult?: {
+    tags: string[];
+    rating: string;
+  };
+  
+  // Callbacks to parent to update tags and rating
+  onTagChange?: (submissionId: string, tag: string, checked: boolean) => void;
+  onRatingChange?: (submissionId: string, rating: string) => void;
 }
-
 interface ListItemState {
   previewVisible: boolean;
   showScheduler: boolean;
   disableActions: boolean;
 }
-
 export class EditableSubmissionListItem extends React.Component<ListItemProps, ListItemState> {
-  state: any = {
-    previewVisible: false,
-    showScheduler: false,
-    disableActions: false
-  };
-
   disableActions: boolean = false;
   postAt: number | undefined = undefined;
+
+  constructor(props: ListItemProps) {
+    super(props);
+    this.state = {
+      previewVisible: false,
+      showScheduler: false,
+      disableActions: false,
+    };
+  }
 
   hidePreview() {
     this.setState({ previewVisible: false });
@@ -82,7 +105,7 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
         message.success('Submission duplicated.');
       })
       .catch(() => {
-        message.error('PostyBirb was unable to duplicate the submission.');
+        message.error('Failed to duplicate submission.');
       })
       .finally(() => {
         this.setState({ disableActions: false });
@@ -134,6 +157,14 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
       });
   }
 
+  moveItem(currentIndex, offset) {
+    const newIndex = currentIndex + offset;
+    if (newIndex >= 0 && newIndex < this.props.totalItems) {
+      submissionStore.changeOrder(this.props.item.submission._id, currentIndex, newIndex);
+      this.forceUpdate(); // To ensure re-render
+    }
+  }
+
   unsupportedAdditionalWebsites() {
     const { item } = this.props;
     if ((item.submission as FileSubmission).additional!.length) {
@@ -176,10 +207,11 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
   };
 
   render() {
-    const { item } = this.props;
+    const { item, autoTaggingResult, onTagChange, onRatingChange } = this.props;
     const problems: Problems = item.problems;
     const problemCount: number = SubmissionUtil.getProblemCount(problems);
     const hasFailure = !!Object.values(item.parts).find(p => p.postStatus === 'FAILED');
+
     return (
       <Draggable
         key={item.submission._id}
@@ -202,9 +234,7 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
               }
               actions={[
                 <span
-                  className={`text-link ${
-                    problemCount > 0 || this.state.disableActions ? 'disabled' : ''
-                  }`}
+                  className={`text-link ${problemCount > 0 || this.state.disableActions ? 'disabled' : ''}`}
                   key="submission-post"
                   onClick={this.onPost.bind(this)}
                 >
@@ -226,6 +256,7 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
                 <Link
                   className={`${this.state.disableActions ? 'disabled' : ''}`}
                   to={`/edit/submission/${item.submission.type}/${item.submission._id}`}
+                  key="submission-edit-link"
                 >
                   <span key="submission-edit">Edit</span>
                 </Link>,
@@ -236,12 +267,54 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
                 >
                   Duplicate
                 </span>,
+
+                <span
+                  className="text-link"
+                  key="move-up-5"
+                  onClick={() => this.moveItem(this.props.item.submission.order, -5)}
+                >
+                  Up 5
+                </span>,
+                <span
+                  className="text-link"
+                  key="move-down-5"
+                  onClick={() => this.moveItem(this.props.item.submission.order, 5)}
+                >
+                  Down 5
+                </span>,
+
+                <span
+                  className="text-link"
+                  key="send-to-top"
+                  onClick={() =>
+                    this.moveItem(
+                      this.props.item.submission.order,
+                      -this.props.item.submission.order
+                    )
+                  }
+                >
+                  Send to Top
+                </span>,
+                <span
+                  className="text-link"
+                  key="send-to-bottom"
+                  onClick={() =>
+                    this.moveItem(
+                      this.props.item.submission.order,
+                      this.props.totalItems - this.props.item.submission.order - 1
+                    )
+                  }
+                >
+                  Send to Bottom
+                </span>,
+
                 <Popconfirm
                   disabled={this.state.disableActions}
                   cancelText="No"
                   okText="Yes"
                   title="Are you sure you want to delete? This action cannot be undone."
                   onConfirm={() => SubmissionService.deleteSubmission(item.submission._id)}
+                  key="submission-delete"
                 >
                   <Typography.Text
                     className={`${this.state.disableActions ? 'disabled' : ''}`}
@@ -250,7 +323,7 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
                     Delete
                   </Typography.Text>
                 </Popconfirm>,
-                <IssueState problems={problems} problemCount={problemCount} />
+                <IssueState problems={problems} problemCount={problemCount} key="issue-state" />
               ]}
             >
               <List.Item.Meta
@@ -289,6 +362,55 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
                   </div>
                 }
               ></List.Item.Meta>
+
+              {/* If autoTaggingResult is present, display the suggested tags and rating UI */}
+              {autoTaggingResult && (
+                <div style={{ marginTop: '10px' }}>
+                  {/* Image Preview */}
+                  {item.submission.type === SubmissionType.FILE && (() => {
+                    const fileSubmission = item.submission as MyFileSubmission;
+                    if ('fileInfo' in fileSubmission && fileSubmission.fileInfo) {
+                      return (
+                        <img
+                          src={fileSubmission.fileInfo.previewPath}
+                          alt={item.submission.title}
+                          style={{ maxWidth: '200px' }}
+                        />
+                      );
+                    }
+                  })()}
+
+                  {/* Suggested Tags */}
+                  <div>
+                    <h4>Suggested Tags:</h4>
+                    {autoTaggingResult.tags.map(tag => (
+                      <Checkbox
+                        key={tag}
+                        // Instead of storing local state here, we rely on parent's data
+                        // The parent will pass down whether this tag is selected
+                        checked={this.props.autoTaggingResult?.tags.includes(tag)}
+                        onChange={(e) => onTagChange && onTagChange(item.submission._id, tag, e.target.checked)}
+                      >
+                        {tag}
+                      </Checkbox>
+                    ))}
+                  </div>
+
+                  {/* Rating Options */}
+                  <div style={{ marginTop: '10px' }}>
+                    <h4>Rating:</h4>
+                    <Radio.Group
+                      value={this.props.autoTaggingResult?.rating ?? 'GENERAL'}
+                      onChange={(e) => onRatingChange && onRatingChange(item.submission._id, e.target.value)}
+                    >
+                      <Radio value="GENERAL">GENERAL</Radio>
+                      <Radio value="MATURE">MATURE</Radio>
+                      <Radio value="ADULT">ADULT</Radio>
+                    </Radio.Group>
+                  </div>
+                </div>
+              )}
+
               {item.submission.type === SubmissionType.FILE ? (
                 <Modal
                   visible={this.state.previewVisible}
@@ -319,7 +441,7 @@ export class EditableSubmissionListItem extends React.Component<ListItemProps, L
                   className="w-full"
                   defaultValue={
                     this.props.item.submission.schedule.postAt
-                      ? moment(this.state.postAt)
+                      ? moment(this.props.item.submission.schedule.postAt)
                       : undefined
                   }
                   format="YYYY-MM-DD HH:mm:ss"

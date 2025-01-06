@@ -1,6 +1,6 @@
 /* tslint:disable: no-console no-var-requires variable-name */
 import { clipboard, dialog, shell, session, app, getCurrentWindow } from '@electron/remote';
-
+import { ipcRenderer } from 'electron';
 // Authorizers
 const Tumblr = require('./authorizers/tumblr.auth');
 
@@ -53,4 +53,7 @@ process.once('loaded', () => {
   auth: {
     Tumblr,
   },
+};
+(window as any).aiTaggerApi = {
+  autoTagImage: (imagePath: string) => ipcRenderer.invoke('autoTaggingRequest', imagePath),
 };

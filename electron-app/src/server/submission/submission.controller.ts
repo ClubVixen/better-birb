@@ -46,6 +46,12 @@ export class SubmissionController {
     return value === 'true' || value === '';
   }
 
+  @Get('scheduled')
+async getScheduledSubmissions() {
+  return await this.service.getScheduledSubmissions();
+}
+
+
   @Get()
   async getSubmissions(
     @Query('packaged') packaged: string,

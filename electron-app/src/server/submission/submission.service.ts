@@ -787,7 +787,19 @@ export class SubmissionService {
     this.eventEmitter.emit(Events.SubmissionEvent.UPDATED, [validated]);
     return validated;
   }
-
+  async getScheduledSubmissions(): Promise<SubmissionPackage<any>[]> {
+    try {
+      // Fetch all submissions and validate them
+      const submissions = await this.getAllAndValidate();
+      // Filter for submissions that have a scheduled post date
+      return submissions.filter(submission => submission.submission.schedule?.postAt);
+    } catch (error) {
+      this.logger.error('Error fetching scheduled submissions:', error);
+      return [];
+    }
+  }
+  
+  
   async addFileSubmissionAdditionalFile(
     file: UploadedFile,
     id: string,

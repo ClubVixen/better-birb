@@ -1,6 +1,6 @@
 /* tslint:disable: no-console no-var-requires */
 import path from 'path';
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, Tray, Notification } from 'electron';
+import { app,ipcMain, BrowserWindow, Menu, nativeImage, nativeTheme, Tray, Notification } from 'electron';
 import WindowStateKeeper from 'electron-window-state';
 import { enableSleep } from './app/power-save';
 import * as util from './app/utils';
@@ -270,3 +270,56 @@ function show(): void {
 }
 
 global.showApp = show;
+// main.js (or main.ts)
+
+const { spawn } = require('child_process');
+
+
+// This is the same logic from your AiTaggerService, but now in main:
+ipcMain.handle('autoTaggingRequest', async (event, imagePath) => {
+  return new Promise((resolve, reject) => {
+    // Path to 'tagger.py'
+    const scriptPath = path.join(
+      __dirname,
+      '..', '..', 
+      'AiTagger',
+      'tagger.py'
+    );
+
+    // Path to python in the venv
+    const pythonExe = path.join(
+      __dirname,
+      '..','..','AiTagger','venv','Scripts','python.exe'
+    );
+
+    const py = spawn(pythonExe, [scriptPath, imagePath]);
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    py.stdout.on('data', (data) => {
+      stdoutData += data.toString();
+    });
+
+    py.stderr.on('data', (data) => {
+      stderrData += data.toString();
+    });
+
+    py.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(`Python script exited with code ${code}: ${stderrData}`));
+
+      }
+      try {
+        const result = JSON.parse(stdoutData);
+        // e.g. {"tags":["cat","feline"],"rating":"Safe"}
+        resolve({
+          tags: result.tags || [],
+          rating: result.rating || 'Safe'
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+});
