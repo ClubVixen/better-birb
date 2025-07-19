@@ -1,4 +1,4 @@
-import { Checkbox, Form, Input, Select } from 'antd';
+import { Checkbox,Switch, Form, Input, Select } from 'antd';
 import {
   FileSubmission,
   BlueskyFileOptions,
@@ -14,6 +14,10 @@ import GenericSubmissionSection from '../generic/GenericSubmissionSection';
 import { LoginDialogProps } from '../interfaces/website.interface';
 import { WebsiteImpl } from '../website.base';
 import BlueskyLogin from './BlueskyLogin';
+import { RandomMessageStore } from '../../stores/random-message.store';
+import { observer, inject } from 'mobx-react';
+
+
 
 export class Bluesky extends WebsiteImpl {
   internalName: string = 'Bluesky';
@@ -85,7 +89,12 @@ BlueskyNotificationOptions
   }
 }
 
+@inject('randomMessageStore')
+@observer
 export class BlueskyFileSubmissionForm extends GenericFileSubmissionSection<BlueskyFileOptions> {
+  get randomMessageStore(): RandomMessageStore | undefined {
+    return (this.props as any).randomMessageStore;
+  }
   renderLeftForm(data: BlueskyFileOptions) {
     const elements = super.renderLeftForm(data);
     elements.push(
@@ -126,6 +135,56 @@ export class BlueskyFileSubmissionForm extends GenericFileSubmissionSection<Blue
         <Input value={data.replyToUrl} onChange={this.handleValueChange.bind(this, 'replyToUrl')} />
       </Form.Item>,
     );
+    elements.push(
+      <Form.Item label="Use Random Message?">
+        <Switch
+          checked={!!data.useRandomMessage}
+          onChange={(checked) => this.setValue('useRandomMessage', checked)}
+        />
+      </Form.Item>
+    );
+    if (data.useRandomMessage) {
+      const allSets = this.randomMessageStore?.messages || [];
+      elements.push(
+        <Form.Item label="Random Message Set">
+          <Select
+            style={{ width: '100%' }}
+            value={data.randomMessageId}
+            onChange={(val) => this.setValue('randomMessageId', val)}
+            placeholder="Pick a random-message set"
+          >
+            {allSets.map((rm) => (
+              <Select.Option value={rm._id} key={rm._id}>
+                {rm.title}
+              </Select.Option>
+            ))}
+          </Select>
+        </Form.Item>
+      );
+    }
+
+    elements.push(
+      <Form.Item label="Use Reply Post?">
+        <Switch
+          checked={!!data.useReplyPost}
+          onChange={(checked) => this.setValue('useReplyPost', checked)}
+        />
+      </Form.Item>
+    );
+    if (data.useReplyPost) {
+      elements.push(
+        <Form.Item label="Reply Post Text">
+          <Input.TextArea
+            rows={3}
+            placeholder="Enter text for your 2nd, reply post"
+            value={data.replyMessage || ''}
+            onChange={(e) => this.setValue('replyMessage', e.target.value)}
+          />
+        </Form.Item>
+      );
+    }
+
     return elements;
   }
 }
+

@@ -3,6 +3,7 @@ import './AppLayout.css';
 import '../../services/ui-notification.service';
 import AppHeader from '../app-header/AppHeader';
 import AppUpdate from '../update/AppUpdate';
+import RandomMessages from '../random-messages/RandomMessages';
 import DescriptionTemplates from '../description-templates/DescriptionTemplates';
 import Home from '../home/Home';
 import SettingsView from '../settings/SettingsView';
@@ -38,6 +39,13 @@ import {
 } from 'antd';
 import ErrorBoundary from '../../components/ErrorBoundary';
 
+// ==========================================
+// Suppose you have a <RandomMessages /> component
+// in your code at "random-messages/RandomMessages.tsx"
+// or similar location. Import it if so:
+// import RandomMessages from '../random-messages/RandomMessages';
+// ==========================================
+
 const { Content, Sider } = Layout;
 
 interface Props {
@@ -51,18 +59,24 @@ interface State {
   settingsVisible: boolean;
   tagGroupVisible: boolean;
   tagConverterVisible: boolean;
+
+  // Add new state for randomMessages Drawer
+  randomMessageVisible: boolean;
 }
 
 @inject('uiStore')
 @observer
 export default class AppLayout extends React.Component<Props, State> {
-  public state: any = {
+  public state: State = {
     accountsVisible: false,
     descriptionShortcutsVisible: false,
     descriptionTemplateVisible: false,
     settingsVisible: false,
     tagGroupVisible: false,
-    tagConverterVisible: false
+    tagConverterVisible: false,
+
+    // Initialize our randomMessage drawer as hidden
+    randomMessageVisible: false,
   };
 
   private readonly websites = Object.keys(WebsiteRegistry.websites);
@@ -112,6 +126,7 @@ export default class AppLayout extends React.Component<Props, State> {
       maxCount: 2
     });
     this.props.uiStore!.setActiveNav(this.getCurrentNavId());
+
     return (
       <ConfigProvider>
         <Modal
@@ -227,24 +242,7 @@ export default class AppLayout extends React.Component<Props, State> {
                   onClick={() => this.setState({ descriptionTemplateVisible: true })}
                 >
                   <span>
-                    <span>
-                      <i
-                        aria-label="icon: description-template"
-                        className="anticon description-template"
-                      >
-                        <svg
-                          viewBox="0 0 20 20"
-                          focusable="false"
-                          data-icon="description-template"
-                          width="1em"
-                          height="1em"
-                          fill="currentColor"
-                          aria-hidden={true}
-                        >
-                          <path d="M19 19v-1H5v1h14zM9 16v-4a5 5 0 1 1 6 0v4h4a2 2 0 0 1 2 2v3H3v-3c0-1.1.9-2 2-2h4zm4 0v-5l.8-.6a3 3 0 1 0-3.6 0l.8.6v5h2z"></path>
-                        </svg>
-                      </i>
-                    </span>
+                    <Icon type="profile" />
                     <span>Description</span>
                   </span>
                 </Menu.Item>
@@ -266,10 +264,7 @@ export default class AppLayout extends React.Component<Props, State> {
                     <span>Tag Converters</span>
                   </span>
                 </Menu.Item>
-                <Menu.Item
-                  key="tag-groups"
-                  onClick={() => this.setState({ tagGroupVisible: true })}
-                >
+                <Menu.Item key="tag-groups" onClick={() => this.setState({ tagGroupVisible: true })}>
                   <span>
                     <Icon type="tags" />
                     <span>Tag Groups</span>
@@ -281,12 +276,25 @@ export default class AppLayout extends React.Component<Props, State> {
                     <span>Submission</span>
                   </Link>
                 </Menu.Item>
+
+                {/* ************ 
+                    Add a new Menu.Item for RandomMessages 
+                ************ */}
+                <Menu.Item
+                  key="random-messages"
+                  onClick={() => this.setState({ randomMessageVisible: true })}
+                >
+                  <span>
+                    <Icon type="message" />
+                    <span>Random Messages</span>
+                  </span>
+                </Menu.Item>
               </Menu.SubMenu>
 
               <Menu.Item
-                key="discord"
+                key="Twitch"
                 onClick={() =>
-                  window.electron.shell.openInBrowser('https://discordapp.com/invite/jK5JQJF')
+                  window.electron.shell.openInBrowser('https://www.twitch.tv/moliminoustheater')
                 }
               >
                 <Icon component={DiscordIcon} />
@@ -295,7 +303,7 @@ export default class AppLayout extends React.Component<Props, State> {
 
               <Menu.Item
                 key="donate"
-                onClick={() => window.electron.shell.openInBrowser('http://ko-fi.com/A81124JD')}
+                onClick={() => window.electron.shell.openInBrowser('http://ko-fi.com/moliminous')}
               >
                 <Icon component={KofiIcon} />
                 <span>Donate</span>
@@ -308,6 +316,8 @@ export default class AppLayout extends React.Component<Props, State> {
                 </span>
               </Menu.Item>
             </Menu>
+
+            {/* Tag Converters Drawer */}
             <Drawer
               title="Tag Converters"
               visible={this.state.tagConverterVisible}
@@ -317,6 +327,8 @@ export default class AppLayout extends React.Component<Props, State> {
             >
               <TagConverters />
             </Drawer>
+
+            {/* Tag Groups Drawer */}
             <Drawer
               title="Tag Groups"
               visible={this.state.tagGroupVisible}
@@ -326,6 +338,8 @@ export default class AppLayout extends React.Component<Props, State> {
             >
               <TagGroups />
             </Drawer>
+
+            {/* Description Templates Drawer */}
             <Drawer
               title="Description Templates"
               visible={this.state.descriptionTemplateVisible}
@@ -335,6 +349,8 @@ export default class AppLayout extends React.Component<Props, State> {
             >
               <DescriptionTemplates />
             </Drawer>
+
+            {/* Custom Shortcuts Drawer */}
             <Drawer
               title="Custom Description Shortcuts"
               visible={this.state.descriptionShortcutsVisible}
@@ -344,6 +360,22 @@ export default class AppLayout extends React.Component<Props, State> {
             >
               <CustomShortcuts />
             </Drawer>
+
+            {/* 
+              New Drawer for Random Messages 
+              so you can show <RandomMessages /> 
+            */}
+            <Drawer
+              title="Random Messages"
+              visible={this.state.randomMessageVisible}
+              destroyOnClose={true}
+              onClose={() => this.setState({ randomMessageVisible: false })}
+              width="50vw"
+            >
+              <RandomMessages /> 
+            </Drawer>
+
+            {/* Accounts Drawer */}
             <Drawer
               title={
                 <div className="inline-flex w-4/5">
@@ -371,6 +403,8 @@ export default class AppLayout extends React.Component<Props, State> {
             >
               <Login />
             </Drawer>
+
+            {/* Settings Drawer */}
             <Drawer
               title="Settings"
               visible={this.state.settingsVisible}
@@ -403,9 +437,7 @@ export default class AppLayout extends React.Component<Props, State> {
                       path="/edit/submission-template/:id"
                       component={SubmissionTemplateEditForm}
                     />
-                    <BackTop
-                      target={() => document.getElementById('primary-container') || window}
-                    />
+                    <BackTop target={() => document.getElementById('primary-container') || window} />
                     <Prompt
                       when={this.props.uiStore!.state.hasPendingChanges}
                       message="Are you sure you want to navigate? Any unsaved changes will be lost."

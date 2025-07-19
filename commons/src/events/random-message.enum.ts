@@ -1,0 +1,6 @@
+export enum RandomMessageEvent {
+    CREATED = '[RANDOM MESSAGE] CREATED',
+    UPDATED = '[RANDOM MESSAGE] UPDATED',
+    REMOVED = '[RANDOM MESSAGE] REMOVED',
+  }
+  

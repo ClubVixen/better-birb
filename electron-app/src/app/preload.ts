@@ -1,23 +1,28 @@
 /* tslint:disable: no-console no-var-requires variable-name */
 import { clipboard, dialog, shell, session, app, getCurrentWindow } from '@electron/remote';
 import { ipcRenderer } from 'electron';
+
 // Authorizers
 const Tumblr = require('./authorizers/tumblr.auth');
 
 const _setImmediate = setImmediate;
 const _clearImmediate = clearImmediate;
 const _Buffer = Buffer;
+
 process.once('loaded', () => {
   global.setImmediate = _setImmediate;
   global.clearImmediate = _clearImmediate;
   global.Buffer = _Buffer;
 });
 
+// Provide global variables for your renderer
 (window as any).PORT = (getCurrentWindow() as any).PORT;
 (window as any).AUTH_ID = (getCurrentWindow() as any).AUTH_ID;
 (window as any).IS_DARK_THEME = (getCurrentWindow() as any).IS_DARK_THEME;
 (window as any).AUTH_SERVER_URL = (getCurrentWindow() as any).AUTH_SERVER_URL;
 (window as any).appVersion = app.getVersion();
+
+// Provide electron-related APIs to the renderer
 (window as any).electron = {
   clipboard: {
     availableFormats: clipboard.availableFormats,
@@ -31,6 +36,7 @@ process.once('loaded', () => {
       });
     },
   },
+  
   dialog: {
     showOpenDialog(options) {
       return dialog.showOpenDialog(getCurrentWindow(), options || {});
@@ -54,6 +60,11 @@ process.once('loaded', () => {
     Tumblr,
   },
 };
+
+// Provide AI Tagger methods for your renderer
 (window as any).aiTaggerApi = {
-  autoTagImage: (imagePath: string) => ipcRenderer.invoke('autoTaggingRequest', imagePath),
+  autoTagImage: (imagePath: string) =>
+    ipcRenderer.invoke('autoTaggingRequest', imagePath),
+  generateTitle: (imagePath: string, tags: string[], rating: string) =>
+    ipcRenderer.invoke('generateTitleRequest', { imagePath, tags, rating: rating }),
 };

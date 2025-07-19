@@ -5,4 +5,8 @@ export interface BlueskyFileOptions extends DefaultFileOptions {
   label_rating: string;
   replyToUrl?: string;
   threadgate?: string;
+  randomMessageId?: string;
+  replyMessage?: string;
+  useReplyPost?: boolean;
+  useRandomMessage?: boolean;
 }

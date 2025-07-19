@@ -6,6 +6,7 @@ export * from './enums/submission-type.enum';
 // Events
 import * as Events from './events/events';
 export { Events };
+export { RandomMessageEvent } from './events/random-message.enum';
 
 // Interfaces
 export * from './interfaces/account/user-account.dto.interface';
@@ -107,3 +108,6 @@ export { WebsiteOptions };
 
 // Doesn't really fit :P
 export * from './websites/megalodon/megalodon.instancesettings';
+
+export * from './events/random-message.enum'; 
+export * from './interfaces/random-message/random-message.interface';

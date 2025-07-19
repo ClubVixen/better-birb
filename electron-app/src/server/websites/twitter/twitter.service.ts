@@ -28,8 +28,15 @@ import { ContentBlurType } from './enums/twitter-sensitive-media-warnings.enum';
 import { SubmissionPost } from './models/submission-post.model';
 import { TwitterAPIService } from './twitter-api.service';
 
+import { RandomMessageService } from 'src/server/random-message/random-message.service';
+import RandomMessageEntity from 'src/server/random-message/models/random-message.entity';
+
 @Injectable()
 export class Twitter extends Website {
+  /** 
+   * Implementation of required abstract members/properties 
+   * from the Website base class
+   */
   MAX_CHARS: number = 280;
   readonly BASE_URL = '';
   readonly acceptsAdditionalFiles = true;
@@ -43,10 +50,144 @@ export class Twitter extends Website {
     },
   ];
 
-  constructor(private readonly api: TwitterAPIService) {
+  /**
+   * Map from a RandomMessageEntity._id => shuffled array of messages
+   * so we don't repeat any message until they've all been used.
+   */
+  private messagePools: Map<string, string[]> = new Map();
+
+  constructor(
+    private readonly api: TwitterAPIService,
+    private readonly randomMessageService: RandomMessageService,
+  ) {
     super();
   }
 
+  /**
+   * Non-repeating approach:
+   * If we don't have a pool or it's empty, shuffle a new copy from entity.messages.
+   * Then pop one.
+   */
+  private getNextMessage(entity: RandomMessageEntity): string {
+    let pool = this.messagePools.get(entity._id);
+    if (!pool || pool.length === 0) {
+      pool = [...entity.messages];
+      // shuffle
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+      this.messagePools.set(entity._id, pool);
+    }
+    return pool.pop()!;
+  }
+
+  /**
+   * Post file submission to Twitter, optionally appending a random message
+   * from a chosen RandomMessageEntity (if data.options.randomMessageId is set).
+   */
+  async postFileSubmission(
+    cancellationToken: CancellationToken,
+    data: FilePostData<TwitterFileOptions>,
+    accountData: TwitterAccountData
+  ): Promise<PostResponse> {
+    this.checkCancelled(cancellationToken);
+
+    // Start with the user-provided description
+    let combinedDescription = data.description || '';
+
+    // If user has chosen a randomMessageId, append a random message from that set
+    if (data.options.randomMessageId) {
+      const randomEntity: RandomMessageEntity = await this.randomMessageService.get(
+        data.options.randomMessageId
+      );
+      const randomMsg = this.getNextMessage(randomEntity);
+      combinedDescription += `\n\n${randomMsg}`;
+    }
+
+    // post the main tweet
+    const mainForm  = new SubmissionPost<{
+      contentBlur: ContentBlurType;
+    }>({
+      token: accountData.oauth_token,
+      secret: accountData.oauth_token_secret,
+      title: '',
+      description: combinedDescription,
+      tags: data.tags,
+      files: [data.primary, ...data.additional].map(f => ({
+        data: f.file.value.toString('base64'),
+        ...f.file.options,
+      })),
+      rating: data.rating,
+      options: {
+        contentBlur: data.options?.contentBlur
+      }
+    });
+
+    this.checkCancelled(cancellationToken);
+    const mainTweetResult = await this.api.post(
+        
+      { key: accountData.key, secret: accountData.secret },
+      mainForm 
+    );
+    
+
+    if (!mainTweetResult.success) {
+      return Promise.reject(
+        this.createPostResponse({ 
+          additionalInfo: mainTweetResult, 
+          message: mainTweetResult.error 
+        })
+      );
+    }
+
+
+
+     // mainTweetResult.data.url => link
+  // mainTweetResult.data.id  => numeric tweet ID for replies
+  const mainId = mainTweetResult.data.id;
+  this.logger.log(`Main tweet ID: ${mainId}`);
+  
+  
+
+    // 4) If user toggled "Reply Tweet," do it now
+    if (data.options.useReplyTweet && data.options.replyMessage) {
+      const replyText = data.options.replyMessage || '';
+      const replyForm = new SubmissionPost<{ contentBlur: ContentBlurType }>({
+        token: accountData.oauth_token,
+        secret: accountData.oauth_token_secret,
+        title: '',
+        description: replyText,
+        tags: [], // no tags for the reply, presumably
+        files: [], // no images
+        rating: data.rating,
+        options: {
+          contentBlur: undefined
+        }
+      });
+
+      this.logger.debug(`Sending second tweet with in_reply_to: ${mainId}`);
+      const replyResult = await this.api.post(
+        { key: accountData.key, secret: accountData.secret },
+        replyForm,
+        mainId, // <--- pass the ID so the tweet is a reply
+      );
+
+      if (!replyResult.success) {
+        this.logger.warn(`Failed to post reply tweet: ${replyResult.error}`);
+      } else {
+        this.logger.log(`Reply tweet posted: ${replyResult.data.url}`);
+      }
+    }
+
+    // Finally, return a success referencing your main tweet
+  return this.createPostResponse({ source: mainTweetResult.data.url });
+  }
+
+
+  /** 
+   * Standard transformations & validations
+   */
   transformAccountData(data: TwitterAccountData): object {
     return { key: data.key, secret: data.secret };
   }
@@ -76,40 +217,9 @@ export class Twitter extends Website {
     return status;
   }
 
-  async postFileSubmission(
-    cancellationToken: CancellationToken,
-    data: FilePostData<TwitterFileOptions>,
-    accountData: TwitterAccountData,
-  ): Promise<PostResponse> {
-    let contentBlur = data?.options?.contentBlur;
-
-    const form = new SubmissionPost<{
-      contentBlur: ContentBlurType;
-    }>({
-      token: accountData.oauth_token,
-      secret: accountData.oauth_token_secret,
-      title: '',
-      description: data.description,
-      tags: data.tags,
-      files: [data.primary, ...data.additional].map(f => ({
-        data: f.file.value.toString('base64'),
-        ...f.file.options,
-      })),
-      rating: data.rating,
-      options: {
-        contentBlur,
-      },
-    });
-
-    this.checkCancelled(cancellationToken);
-    const post = await this.api.post({ key: accountData.key, secret: accountData.secret }, form);
-    if (post.success) {
-      return this.createPostResponse({ source: post.data.url });
-    }
-
-    return Promise.reject(this.createPostResponse({ additionalInfo: post, message: post.error }));
-  }
-
+  /**
+   * Post notification submission (unchanged)
+   */
   async postNotificationSubmission(
     cancellationToken: CancellationToken,
     data: PostData<Submission, DefaultOptions>,
@@ -138,6 +248,9 @@ export class Twitter extends Website {
     return Promise.reject(this.createPostResponse({ additionalInfo: post, message: post.error }));
   }
 
+  /**
+   * Validation checks 
+   */
   validateFileSubmission(
     submission: FileSubmission,
     submissionPart: SubmissionPart<TwitterFileOptions>,
@@ -166,7 +279,7 @@ export class Twitter extends Website {
         );
       } else {
         warnings.push(`You have not inserted the {tags} shortcut in your description; 
-          tags will not be inserted in your post`)
+          tags will not be inserted in your post`);
       }
     }
 
@@ -208,7 +321,7 @@ export class Twitter extends Website {
     submissionPart: SubmissionPart<TwitterFileOptions>,
     defaultPart: SubmissionPart<DefaultOptions>,
   ): ValidationParts {
-    const warnings = [];
+    const warnings: string[] = [];
 
     const description = PlaintextParser.parse(
       FormContent.getDescription(defaultPart.data.description, submissionPart.data.description),
@@ -229,7 +342,7 @@ export class Twitter extends Website {
         );
       } else {
         warnings.push(`You have not inserted the {tags} shortcut in your description; 
-          tags will not be inserted in your post`)
+          tags will not be inserted in your post`);
       }
     }
 

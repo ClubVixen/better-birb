@@ -10,3 +10,4 @@ export * from './tag-converter.enum';
 export * from './tag-group.enum';
 export * from './ui-notification.enum';
 export * from './update.enum';
+export * from './random-message.enum';

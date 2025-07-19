@@ -1,0 +1,6 @@
+{
+    "python.analysis.extraPaths": [
+        "./AiTagger/DeepSeek-VL",
+        "./AiTagger/DeepSeek-VL2"
+    ]
+}

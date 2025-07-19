@@ -44,7 +44,7 @@ interface SendTweetV2Params {
 @Injectable()
 export class TwitterAPIService {
   private readonly logger = new Logger(TwitterAPIService.name);
-
+  
   private readonly MAX_FILE_CHUNK: number = 5 * 1024 * 1024;
 
   private getClient(apiKeys: ApiData, token?: any, version?: string) {
@@ -98,7 +98,8 @@ export class TwitterAPIService {
   async post(
     apiKeys: ApiData,
     data: SubmissionPost<{ contentBlur: ContentBlurType }>,
-  ): Promise<ApiResponse<{ url: string }>> {
+    replyToId?: string
+  ): Promise<ApiResponse<{ url: string; id?: string }>> {
     const client = this.getClient(apiKeys, {
       oauth_token: data.token,
       oauth_token_secret: data.secret,
@@ -109,6 +110,10 @@ export class TwitterAPIService {
       text: data.description || '',
       // possibly_sensitive: data.rating !== 'general',
     };
+    // If replying to an existing tweet
+    if (replyToId) {
+      tweet.reply = { in_reply_to_tweet_id: replyToId };
+    }
 
     tweet.text = (tweet?.text || '');
 
@@ -161,8 +166,8 @@ export class TwitterAPIService {
     }
 
     try {
-      let url: string;
-      let replyId;
+      let url: string = '';
+    let replyId: string | undefined; 
       for (const t of tweets) {
         if (replyId) {
           t.reply = {
@@ -178,15 +183,20 @@ export class TwitterAPIService {
           token_secret: tokens.secret,
         };
         const post = await this.postTweet(t, oauth);
+        const postedId = post.data?.id ?? post.id_str;
         const me = await this.getAuthenticatedUser(oauth);
+        this.logger.debug(`Raw Tweet Response from Twitter:\n${JSON.stringify(post, null, 2)}`);
+        this.logger.debug(`Parsed tweet ID: ${postedId}`);
         if (!url) {
-          url = `https://twitter.com/${me.data.username}/status/${post.data.id}`;
+          url = `https://twitter.com/${me.data.username}/status/${postedId}`;
         }
-        replyId = post.id_str;
+        replyId = postedId; // for next iteration
       }
+
       return new ApiResponse({
         data: {
           url,
+          id: replyId,
         },
       });
     } catch (err) {

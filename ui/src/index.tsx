@@ -19,6 +19,7 @@ declare global {
 
   interface Window {
     electron: {
+      ipcRenderer: any;
       clipboard: {
         availableFormats: () => string[];
         read: () => File;

@@ -12,6 +12,7 @@ export class TwitterFileOptionsEntity
   @IsString()
   contentBlur?: 'other' | 'graphic_violence' | 'adult_content';
 
+
   constructor(entity?: Partial<TwitterFileOptions>) {
     super(entity as DefaultFileOptions);
   }

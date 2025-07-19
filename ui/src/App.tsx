@@ -17,6 +17,8 @@ import { notificationStore } from './stores/notification.store';
 import { customShortcutStore } from './stores/custom-shortcut.store';
 import { tagConverterStore } from './stores/tag-converter.store';
 import { configure } from 'react-hotkeys';
+import { randomMessageStore } from './stores/random-message.store';
+
 
 configure({
   ignoreTags: ['textarea']
@@ -68,6 +70,8 @@ export default class App extends React.Component {
           notificationStore={notificationStore}
           customShortcutStore={customShortcutStore}
           tagConverterStore={tagConverterStore}
+          randomMessageStore={randomMessageStore}
+
         >
           <Modal
             visible={this.state.showConfirmation}

@@ -410,12 +410,12 @@ export class DeviantArt extends Website {
     if (
       FormContent.getTags(defaultPart.data.tags, submissionPart.data.tags).length > this.MAX_TAGS
     ) {
-      problems.push(`Tags will be limited to ${this.MAX_TAGS}.`);
+     // problems.push(`Tags will be limited to ${this.MAX_TAGS}.`); fuck this this is dumb. all tags will be truncated to 30 minus 1
     }
 
     const rating = submissionPart.data.rating || defaultPart.data.rating;
     if ((rating && rating === SubmissionRating.EXTREME) || rating === SubmissionRating.ADULT) {
-      problems.push(`${rating} rating may violate website guidelines.`);
+     // problems.push(`${rating} rating may violate website guidelines.`); may but doens't ignore.
     }
 
     if (!WebsiteValidator.supportsFileType(submission.primary, this.acceptsFiles)) {

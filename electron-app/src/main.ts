@@ -140,7 +140,7 @@ async function initialize() {
 function createWindow() {
   if (!mainWindowState) {
     mainWindowState = WindowStateKeeper({
-      defaultWidth: 992,
+      defaultWidth: 1050,
       defaultHeight: 800,
     });
   }
@@ -276,21 +276,18 @@ const { spawn } = require('child_process');
 
 
 // This is the same logic from your AiTaggerService, but now in main:
-ipcMain.handle('autoTaggingRequest', async (event, imagePath) => {
-  return new Promise((resolve, reject) => {
-    // Path to 'tagger.py'
-    const scriptPath = path.join(
-      __dirname,
-      '..', '..', 
-      'AiTagger',
-      'tagger.py'
-    );
+ipcMain.handle('autoTaggingRequest', async (event, imagePath: string) => {
+  console.log('Starting autoTaggingRequest...');
 
-    // Path to python in the venv
-    const pythonExe = path.join(
-      __dirname,
-      '..','..','AiTagger','venv','Scripts','python.exe'
-    );
+  return new Promise((resolve, reject) => {
+   const scriptPath = path.join(__dirname, '..','..','AiTagger','tagger.py');
+   const pythonExe = path.join(__dirname, '..','..','AiTagger','venv','Scripts','python.exe');
+
+
+const basePath = path.join(process.resourcesPath, 'AiTagger'); 
+//production paths
+//const scriptPath = path.join(basePath, 'tagger.py');
+//const pythonExe = path.join(basePath, 'venv', 'Scripts', 'python.exe');
 
     const py = spawn(pythonExe, [scriptPath, imagePath]);
 
@@ -318,6 +315,62 @@ ipcMain.handle('autoTaggingRequest', async (event, imagePath) => {
           rating: result.rating || 'Safe'
         });
       } catch (err) {
+        reject(err);
+      }
+    });
+    console.log('Finished autoTaggingRequest');
+  });
+});
+ipcMain.handle('generateTitleRequest', async (event, { imagePath, tags, rating }: { imagePath: string, tags: string[], rating: string }) => {
+  console.log('Start Title');
+  return new Promise((resolve, reject) => {
+    // Always use production paths – comment out any dev-specific paths
+    const basePath = process.resourcesPath 
+      ? path.join(process.resourcesPath, 'AiTagger')
+      : path.join(__dirname, '..', '..', 'AiTagger');
+    //const scriptPath = path.join(basePath, 'qwen_title.py');
+    //const pythonExe = path.join(basePath, 'deepseek_env', 'Scripts', 'python.exe');
+    const scriptPath = path.join(__dirname, '..','..','AiTagger','qwen_title.py');
+    const pythonExe = path.join(__dirname, '..','..','AiTagger','deepseek_env','Scripts','python.exe');
+
+    const joinedTags = tags.join(',');
+    // Now pass rating as an extra argument
+    const py = spawn(pythonExe, [scriptPath, imagePath, joinedTags, rating]);
+
+    let stdoutData = '';
+    let stderrData = '';
+
+    py.stdout.on('data', (chunk) => {
+      const text = chunk.toString();
+      stdoutData += text;
+      // Log to see partial lines from Python
+      console.log('[PYTHON STDOUT]', text);
+    });
+
+    py.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      stderrData += text;
+      // Log any warnings/errors from Python
+      console.log('[PYTHON STDERR]', text);
+    });
+
+    py.on('close', (code) => {
+      console.log(`[generateTitleRequest] Python script closed with code ${code}`);
+
+      // Log the entire collected STDOUT and STDERR so you can see them before parse
+      console.log('[PYTHON STDOUT final]', stdoutData);
+      console.log('[PYTHON STDERR final]', stderrData);
+
+      if (code !== 0) {
+        return reject(new Error(`Python script exited with code ${code}\n${stderrData}`));
+      }
+      try {
+        // parse JSON
+        const result = JSON.parse(stdoutData);
+        const finalTitle = result?.title || 'Untitled';
+        resolve({ title: finalTitle });
+      } catch (err) {
+        console.error('[generateTitleRequest] JSON parse failed:', err);
         reject(err);
       }
     });

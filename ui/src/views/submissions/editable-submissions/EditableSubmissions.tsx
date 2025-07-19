@@ -20,6 +20,8 @@ import { FormData } from 'formdata-node';
 import { fileFromPath } from 'formdata-node/file-from-path';
 import fs from 'fs'
 import { getAutoTagsNoUI } from '../../../services/AiTaggerService';
+import { getImageTitle } from '../../../services/AiTaggerService';
+
 interface Props {
   submissions: SubmissionPackage<any>[];
   isLoading: boolean;
@@ -33,6 +35,7 @@ interface ExtendedSubmissionPackage extends SubmissionPackage<any> { // Use this
 interface AutoTagEdit {
   tags: string[];
   rating: string;
+  title: string;
 }
 interface State {
   search: string;
@@ -62,6 +65,7 @@ interface State {
     [submissionId: string]: {
       tags: string[];
       rating: string;
+      title: string;
     };
   };
 
@@ -230,28 +234,9 @@ private generateAffectedFileSubmissions(
 
   return extended;
 }
-/*
 
 
-// --------------------------------------------------------------------------
-// 3) handleAutoTagging: main flow
-// --------------------------------------------------------------------------
-async handleAutoTagging() {
-  // Filter by search first
-  const searchedSubs = this.props.submissions.filter((s) =>
-    SubmissionUtil.getSubmissionTitle(s).toLowerCase().includes(this.state.search)
-  );
 
-  console.log('[Debug] handleAutoTagging - after search filter:', searchedSubs.length, 'submissions');
-
-  // Gather affected file submissions
-  const fileSubs = this.generateAffectedFileSubmissions(
-    searchedSubs,
-    
-  );
-
-  console.log('[Debug] handleAutoTagging - fileSubs to auto-tag:', fileSubs.length);
-*/
 
 // --------------------------------------------------------------------------
 // 2) getAutoTags: calls the spawn-based getAutoTagsNoUI
@@ -283,12 +268,20 @@ async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
     const submission = fileSubs[i];
     const primary = (submission.submission as any).primary;
     const imagePath = primary.location;
+    const ratingMapping: { [key: string]: string } = {
+      "general": "Safe",
+      "sensitive": "Suggestive",
+      "questionable": "Suggestive",
+      "explicit": "Explicit",
+    };
 
     try {
       const result = await this.getAutoTags(imagePath);
+      const normalizedRating = ratingMapping[result.rating.toLowerCase()] || result.rating;
       autoTaggingResults[submission.submission._id] = {
         tags: result.tags,
-        rating: result.rating
+        rating: normalizedRating,
+        title: ''
       };
     } catch (error) {
       console.error('Error auto-tagging submission', error);
@@ -312,9 +305,11 @@ async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
   // Build edits and show modal
   const autoTaggingEdits: { [id: string]: AutoTagEdit } = {};
   for (const id in autoTaggingResults) {
+    const normalizedRating = autoTaggingResults[id].rating.charAt(0).toUpperCase() + autoTaggingResults[id].rating.slice(1);
     autoTaggingEdits[id] = {
       tags: [...autoTaggingResults[id].tags],
-      rating: autoTaggingResults[id].rating,
+      rating: normalizedRating,
+      title: ''
     };
   }
 
@@ -325,6 +320,122 @@ async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
     showAutoTagModal: true,
     autoTaggingEdits,
   });
+}
+private async regenerateTitle(sub: SubmissionPackage<any>) {
+  const submissionId = sub.submission._id;
+  const edit = this.state.autoTaggingEdits?.[submissionId];
+  if (!edit) return; // no data?
+
+  const primary = (sub.submission as any).primary;
+  const imagePath = primary.location;
+  try {
+    // Just call the Qwen script
+    const newTitle = await getImageTitle(imagePath, edit.tags, edit.rating);
+    // set new title in both autoTaggingEdits + autoTaggingResults
+    this.setState((prev) => ({
+      autoTaggingEdits: {
+        ...prev.autoTaggingEdits,
+        [submissionId]: {
+          ...prev.autoTaggingEdits?.[submissionId],
+          title: newTitle,
+        },
+      },
+      autoTaggingResults: {
+        ...prev.autoTaggingResults,
+        [submissionId]: {
+          ...prev.autoTaggingResults[submissionId],
+          title: newTitle,
+        },
+      }
+    }));
+  } catch (err) {
+    console.error('Error regenerating title', err);
+    message.error('Failed to regenerate title');
+  }
+}
+
+private async generateAllTitles() {
+  const { autoTaggingEdits } = this.state;
+  if (!autoTaggingEdits) return;
+
+  // Gather all submissions that have tags
+  const subList = this.props.submissions.filter(
+    (s) => autoTaggingEdits[s.submission._id]?.tags?.length
+  );
+
+  const total = subList.length;
+
+  for (let i = 0; i < total; i++) {
+    const s = subList[i];
+    const subId = s.submission._id;
+    const edit = autoTaggingEdits[subId];
+    if (!edit) continue;
+
+    const primary = (s.submission as any).primary;
+    const imagePath = primary.location;
+
+    try {
+      // Show "in-progress" in the 'title' placeholder
+      const placeholder = `Generating title (${i + 1} / ${total})...`;
+      this.setState((prev) => ({
+        autoTaggingEdits: {
+          ...prev.autoTaggingEdits!,
+          [subId]: {
+            ...prev.autoTaggingEdits![subId],
+            title: placeholder
+          }
+        },
+        autoTaggingResults: {
+          ...prev.autoTaggingResults,
+          [subId]: {
+            ...prev.autoTaggingResults[subId],
+            title: placeholder
+          }
+        }
+      }));
+
+      // Now call the python script to get the real title
+      const newTitle = await getImageTitle(imagePath, edit.tags, edit.rating);
+
+      // Finally, set the real title
+      this.setState((prev) => ({
+        autoTaggingEdits: {
+          ...prev.autoTaggingEdits!,
+          [subId]: {
+            ...prev.autoTaggingEdits![subId],
+            title: newTitle
+          }
+        },
+        autoTaggingResults: {
+          ...prev.autoTaggingResults,
+          [subId]: {
+            ...prev.autoTaggingResults[subId],
+            title: newTitle
+          }
+        }
+      }));
+    } catch (err) {
+      console.error(`Failed to generate title for sub ${subId}`, err);
+      this.setState((prev) => ({
+        autoTaggingEdits: {
+          ...prev.autoTaggingEdits!,
+          [subId]: {
+            ...prev.autoTaggingEdits![subId],
+            title: '[Error generating title]'
+          }
+        },
+        autoTaggingResults: {
+          ...prev.autoTaggingResults,
+          [subId]: {
+            ...prev.autoTaggingResults[subId],
+            title: '[Error generating title]'
+          }
+        }
+      }));
+    }
+  }
+
+  message.success('All titles generated!');
 }
 
 handleTagCheckboxChange = (submissionId: string, tag: string, checked: boolean) => {
@@ -363,7 +474,7 @@ async finalizeAutoTagEdits() {
     // 1) Convert s.parts object to array of [key, part]
     const partsEntries = Object.entries(s.parts);
 
-    // 2) Map over array to update default parts
+    // 2) Update default part
     const updatedEntries = partsEntries.map(([key, part]) => {
       if (part.isDefault) {
         const updatedData = {
@@ -372,14 +483,14 @@ async finalizeAutoTagEdits() {
             extendDefault: false,
             value: edit.tags
           },
-          rating: ratingMap[edit.rating] || SubmissionRating.GENERAL
+          rating: ratingMap[edit.rating] || SubmissionRating.GENERAL,
+          title: edit.title  // store the final generated title
         };
         return [key, { ...part, data: updatedData }] as const;
       }
       return [key, part] as const;
     });
 
-    // 3) Convert back to Record<string, SubmissionPart<any>>
     const updatedParts = Object.fromEntries(updatedEntries);
     const updatedPartsArray = Object.values(updatedParts);
     const update = {
@@ -395,14 +506,14 @@ async finalizeAutoTagEdits() {
       console.error(`Failed to update submission ${s.submission._id}`, e);
       message.error(`Failed to update ${SubmissionUtil.getSubmissionTitle(s)}`);
     }
-  }
+    }
 
-  message.success('All selected submissions updated with new tags and ratings.');
-  this.setState({
+    message.success('All selected submissions updated with new tags and ratings.');
+    this.setState({
     showAutoTagModal: false,
     autoTaggingEdits: undefined
-  });
-}
+    });
+    }
 
 
 renderAutoTagModal() {
@@ -419,8 +530,6 @@ renderAutoTagModal() {
     console.log(
       ' -> Sub ID:',
       sub.submission._id,
-      'title:',
-      sub.submission.title,
       'tags:',
       autoTaggingResults[sub.submission._id].tags
     );
@@ -433,69 +542,121 @@ renderAutoTagModal() {
       width={800}
       onCancel={() => this.setState({ showAutoTagModal: false })}
       onOk={this.finalizeAutoTagEdits.bind(this)}
+      footer={[
+        <Button
+          key="generateAll"
+          onClick={() => this.generateAllTitles()} // calls our new function
+        >
+          Generate All Titles
+        </Button>,
+        <Button
+          key="submit"
+          type="primary"
+          onClick={this.finalizeAutoTagEdits.bind(this)}
+        >
+          OK
+        </Button>
+      ]}
     >
       <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-        <List
-          dataSource={taggedSubmissions}
-          renderItem={submission => {
-            const edit = autoTaggingEdits[submission.submission._id];
-            if (!edit) return null;
-
-            let previewUrl = '';
-            if (submission.submission.type === SubmissionType.FILE) {
-              const fileSub = submission.submission as any;
-              previewUrl = fileSub.primary?.preview || '';
-            }
-
-            return (
-              <List.Item key={submission.submission._id}>
-                <List.Item.Meta
-                  avatar={
-                    previewUrl ? (
-                      <img
-                        src={previewUrl}
-                        alt={submission.submission.title}
-                        style={{ maxWidth: '250px', height: 'auto'  }}
-                      />
-                    ) : null
-                  }
-                  title={SubmissionUtil.getSubmissionTitle(submission)}
-                  description={
-                    <>
-                      <div>
-                        <strong>Tags:</strong>
-                        <div>
-                          {autoTaggingResults[submission.submission._id].tags.map(tag => (
-                            <Checkbox
-                              key={tag}
-                              checked={edit.tags.includes(tag)}
-                              onChange={e =>
-                                this.handleTagCheckboxChange(submission.submission._id, tag, e.target.checked)
-                              }
-                            >
-                              {tag}
-                            </Checkbox>
-                          ))}
-                        </div>
-                      </div>
-                      <div style={{ marginTop: '10px' }}>
-                        <strong>Rating:</strong>
-                        <Radio.Group
-                          value={edit.rating}
-                          onChange={e => this.handleRatingChange(submission.submission._id, e.target.value)}
-                        >
-                          <Radio value="Safe">Safe</Radio>
-                          <Radio value="Suggestive">Suggestive</Radio>
-                          <Radio value="Explicit">Explicit</Radio>
-                        </Radio.Group>
-                      </div>
-                    </>
-                  }
-                />
-              </List.Item>
-            );
-          }}
+      <List
+  dataSource={taggedSubmissions}
+  renderItem={(submission) => {
+    const edit = autoTaggingEdits[submission.submission._id];
+    if (!edit) return null;
+    let previewUrl = '';
+    if (submission.submission.type === SubmissionType.FILE) {
+      const fileSub = submission.submission as any;
+      previewUrl = fileSub.primary?.preview || '';
+    }
+    return (
+      <List.Item key={submission.submission._id}>
+        <List.Item.Meta
+          avatar={
+            previewUrl ? (
+              <img
+                src={previewUrl}
+                alt={submission.submission.title}
+                style={{ maxWidth: '250px', height: 'auto' }}
+              />
+            ) : null
+          }
+          title={
+            <>
+              {SubmissionUtil.getSubmissionTitle(submission)}
+              <br />
+              <small style={{ color: 'gray' }}>Title: {autoTaggingResults[submission.submission._id].title}</small>
+            </>
+          }
+          description={
+            <>
+              <div>
+                <strong>Tags:</strong>
+                <div>
+                  {autoTaggingResults[submission.submission._id].tags.map(tag => (
+                    <Checkbox
+                      key={tag}
+                      checked={edit.tags.includes(tag)}
+                      onChange={e =>
+                        this.handleTagCheckboxChange(submission.submission._id, tag, e.target.checked)
+                      }
+                    >
+                      {tag}
+                    </Checkbox>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginTop: '10px' }}>
+                <strong>Rating:</strong>
+                <Radio.Group
+                  value={edit.rating}
+                  onChange={e => this.handleRatingChange(submission.submission._id, e.target.value)}
+                >
+                  <Radio value="Safe">Safe</Radio>
+                  <Radio value="Suggestive">Suggestive</Radio>
+                  <Radio value="Explicit">Explicit</Radio>
+                </Radio.Group>
+              </div>
+              <div style={{ marginTop: '10px' }}>
+                <strong>Generated Title:</strong> {autoTaggingResults[submission.submission._id].title}
+                <Button
+                  type="link"
+                  onClick={async () => {
+                    const newTitle = await getImageTitle(
+                      (submission.submission as any).primary.location,
+                      autoTaggingEdits[submission.submission._id].tags,
+                      autoTaggingEdits[submission.submission._id].rating  // pass rating
+                    );
+                    this.setState(prev => ({
+                      autoTaggingEdits: {
+                        ...prev.autoTaggingEdits!,
+                        [submission.submission._id]: {
+                          ...prev.autoTaggingEdits![submission.submission._id],
+                          title: newTitle
+                        }
+                      },
+                      autoTaggingResults: {
+                        ...prev.autoTaggingResults,
+                        [submission.submission._id]: {
+                          ...prev.autoTaggingResults[submission.submission._id],
+                          title: newTitle
+                        }
+                      }
+                    }));
+                  }}
+                >
+                  Regenerate Title
+                </Button>
+              </div>
+            </>
+          }
         />
+      </List.Item>
+    );
+  }}
+/>
+
+       
       </div>
     </Modal>
   );
@@ -519,7 +680,7 @@ async scheduleSubmissions(submissions: SubmissionPackage<any>[]) {
     if (applyCascadeToAllSites) return true;
     return !websites.some(site => ignoreSites.includes(site));
   });
-
+  
   if (enableCascade) {
     this.generateAffectedSubmissionsList(
       [...allScheduledSubmissions, ...filteredSubmissions],
@@ -529,7 +690,22 @@ async scheduleSubmissions(submissions: SubmissionPackage<any>[]) {
     return;
   }
 
-  this.confirmScheduleSubmissions(filteredSubmissions);
+  // For non-cascade mode, compute a new date for each submission.
+  let baseTime = moment(this.state.scheduleManyPeriod.time);
+  const updatedSubmissions = filteredSubmissions.map(submission => {
+    // Compute newDate based on baseTime
+    const newDate = baseTime.format('YYYY-MM-DD HH:mm:ss');
+    // Increment baseTime for the next submission
+    baseTime.add(this.state.scheduleManyPeriod.d, 'days')
+            .add(this.state.scheduleManyPeriod.h, 'hours')
+            .add(this.state.scheduleManyPeriod.m, 'minutes');
+    return {
+      ...submission,
+      newDate,
+    } as ExtendedSubmissionPackage;
+  });
+
+  this.confirmScheduleSubmissions(updatedSubmissions)
 }
 
 generateAffectedSubmissionsList(submissions: SubmissionPackage<any>[], startAt: moment.Moment) {

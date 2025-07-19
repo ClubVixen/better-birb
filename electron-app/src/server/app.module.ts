@@ -14,6 +14,7 @@ import { NotificationModule } from './notification/notification.module';
 import { FileManipulationModule } from './file-manipulation/file-manipulation.module';
 import { CustomShortcutModule } from './custom-shortcut/custom-shortcut.module';
 import { TagConverterModule } from './tag-converter/tag-converter.module';
+import { RandomMessageModule } from 'src/server/random-message/random-message.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { TagConverterModule } from './tag-converter/tag-converter.module';
     NotificationModule,
     FileManipulationModule,
     CustomShortcutModule,
+    RandomMessageModule,
     TagConverterModule,
   ],
 })
