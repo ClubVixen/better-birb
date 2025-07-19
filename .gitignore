@@ -62,3 +62,11 @@ typings/
 
 # Jetbrains IDEs
 .idea/*
+
+# AiTagger large model folders
+AiTagger/deepseek_env/
+AiTagger/DeepSeek-VL/
+AiTagger/DeepSeek-VL2/
+AiTagger/venv/
+AiTagger/wd_eva02_model/
+AiTagger/xformers/
