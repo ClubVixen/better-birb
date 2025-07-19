@@ -1,0 +1,17 @@
+[
+  {
+    "image_path": "test.jpg",
+    "tags": "tag1, tag2",
+    "rating": "safe"
+  },
+  {
+    "image_path": "image2.png",
+    "tags": "furry, wolf, night sky",
+    "rating": "explicit"
+  },
+  {
+    "image_path": "image3.png",
+    "tags": "busty character, outdoors",
+    "rating": "explicit"
+  }
+]

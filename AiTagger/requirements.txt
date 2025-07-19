@@ -1,0 +1,10 @@
+pillow>=9.0.0
+onnxruntime>=1.12.0
+huggingface-hub
+transformers==4.41.2
+xformers==0.0.27
+sentencepiece==0.2.0
+bitsandbytes==0.43.1
+einops==0.8.0
+torchvision==0.18.1
+accelerate==0.31.0

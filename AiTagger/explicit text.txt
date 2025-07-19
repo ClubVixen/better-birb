@@ -1,0 +1,575 @@
+#!/usr/bin/env python
+
+try:
+    import xformers.ops as xops
+except ModuleNotFoundError:
+    import torch.nn.functional as F
+    import types
+
+    xops = types.ModuleType("xops")
+
+    def memory_efficient_attention(
+        query, key, value, attn_bias=None, dropout_p=0.0, scale=None
+    ):
+        # Fallback: use PyTorch's scaled_dot_product_attention (ignoring 'scale')
+        return F.scaled_dot_product_attention(
+            query, key, value, attn_mask=attn_bias, dropout_p=dropout_p
+        )
+
+    xops.memory_efficient_attention = memory_efficient_attention
+    import sys
+
+    sys.modules["xformers.ops"] = xops
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+import torch
+
+_old_view = torch.Tensor.view
+
+sys.stdout = sys.__stdout__
+sys.stderr = sys.__stderr__
+def new_view(self, *args, **kwargs):
+    if not args and not kwargs:
+        return self
+    return _old_view(self, *args, **kwargs)
+
+
+torch.Tensor.view = new_view
+
+import sys, os, json, re, random
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "DeepSeek-VL"))
+
+from PIL import Image  # type: ignore
+from huggingface_hub import snapshot_download  # type: ignore
+from deepseek_vl.models import VLChatProcessor, MultiModalityCausalLM
+from deepseek_vl.utils.io import load_pil_images
+from deepseek_vl.utils import io as deepseek_io
+
+# --- Random replacement helper ---
+def random_replace_words(text: str) -> str:
+    # Dictionary of "word": [list_of_possible_replacements]
+    synonyms = {
+        "reverie": [
+            "slutdream",
+            "whore fantasy",
+            "nut vision",
+            "fap material",
+            "jizz hallucination",
+            "cum mirage",
+            "dick trance",
+            "bang delusion",
+        ],
+        "sultry": [
+            "slutty",
+            "fuckable",
+            "dick-teasing",
+            "cock-hungry",
+            "nut-baiting",
+            "sperm-summoning",
+            "goon worthy",
+        ],
+        "beauty": [
+            "slut",
+            "whore",
+            "cum target",
+            "fuckdoll",
+            "nut bucket",
+            "sleeve",
+            "meat puppet",
+            "jizz receptacle",
+        ],
+        "temptation": [
+            "dick bait",
+            "nut temptress",
+            "sperm demon",
+            "goon fuel",
+            "cock trap",
+            "fuck lure",
+            "jizz siren",
+            "wank curse",
+        ],
+        "desire": [
+            "dick thirst",
+            "nut craving",
+            "fucklust",
+            "sperm hunger",
+            "cock fever",
+            "jizz obsession",
+            "goon need",
+            "wank greed",
+        ],
+        "woman": [
+            "cumdump",
+            "fucktoy",
+            "throat goat",
+            "slut",
+            "nut bank",
+            "sperm vault",
+            "bangmaid",
+            "jizz sponge",
+        ],
+        "girl": [
+            "cumdump",
+            "fucktoy",
+            "throat goat",
+            "slut",
+            "nut bank",
+            "sperm vault",
+            "bangmaid",
+            "jizz sponge",
+        ],
+        "gaze": [
+            "fuck-me eyes",
+            "nut stare",
+            "dick hypnosis",
+            "whore look",
+            "goon trance",
+            "jizz invitation",
+            "cock hypnosis",
+            "wank bait",
+        ],
+        "passion": [
+            "rough fuck",
+            "hate sex",
+            "slutbreaking",
+            "whore abuse",
+            "meat pounding",
+            "nut destruction",
+            "jizz ruin",
+            "fuck annihilation",
+        ],
+        "pleasure": [
+            "nut",
+            "creampie",
+            "throatpie",
+            "fuckgasm",
+            "jizz eruption",
+            "sperm flood",
+            "cock frenzy",
+            "wank explosion",
+        ],
+        "seduction": [
+            "slut game",
+            "whore tactics",
+            "dick witchcraft",
+            "pussy hypnosis",
+            "jizz sorcery",
+            "nut voodoo",
+            "cock magic",
+            "fuck alchemy",
+        ],
+        "dream": [
+            "fuck fantasy",
+            "slut hallucination",
+            "nut delusion",
+            "whore mirage",
+            "jizz illusion",
+            "bang vision",
+            "cock daydream",
+            "wank nightmare",
+        ],
+        "body": [
+            "fuckmeat",
+            "cum canvas",
+            "nut vessel",
+            "slut chassis",
+            "jizz playground",
+            "bang wagon",
+            "cock garage",
+            "wank material",
+        ],
+        "lips": [
+            "cock cushions",
+            "nut collectors",
+            "dick pillows",
+            "jizz funnels",
+            "throat blockers",
+            "fuck gaskets",
+            "sperm catchers",
+            "bang flaps",
+        ],
+        "hips": [
+            "nut handles",
+            "fuck levers",
+            "jizz cranks",
+            "bang hinges",
+            "cock grips",
+            "wank rails",
+            "sperm sliders",
+            "goon bars",
+        ],
+        "moan": [
+            "nut music",
+            "cock symphony",
+            "jizz anthem",
+            "fuck hymn",
+            "bang soundtrack",
+            "wank melody",
+            "sperm sonata",
+            "goon chorus",
+        ],
+        "innocence": [
+            "rapebait",
+            "broken-in slut",
+            "defiled doll",
+            "corruption candidate",
+            "virgin whore",
+            "unspoiled fucktoy",
+            "naive nut sack",
+            "pre-ruined sleeve",
+        ],
+        "charm": [
+            "whore aura",
+            "slut magnetism",
+            "cum charm",
+            "dick hypnosis",
+            "fuck pheromones",
+            "jizz gravity",
+            "nut spell",
+            "goon allure",
+        ],
+        "elegance": [
+            "high-class whore",
+            "luxury fuckdoll",
+            "refined cumdump",
+            "aristocrat slut",
+            "designer fuckmeat",
+            "champagne cumsleeve",
+            "executive nut bucket",
+            "bitch in pearls",
+        ],
+        "grace": [
+            "fuck poise",
+            "slut fluidity",
+            "cock ballet",
+            "jizz elegance",
+            "nut refinement",
+            "whore posture",
+            "bang delicacy",
+            "goon finesse",
+        ],
+        "mystery": [
+            "fuck puzzle",
+            "nut enigma",
+            "cock riddle",
+            "jizz paradox",
+            "whore illusion",
+            "slut maze",
+            "bang conundrum",
+            "goon tease",
+        ],
+        "radiance": [
+            "cum glow",
+            "fuck shine",
+            "slut luminescence",
+            "jizz glitter",
+            "nut sparkle",
+            "whore halo",
+            "bang aura",
+            "goon dazzle",
+        ],
+        "blush": [
+            "fuck flush",
+            "slut tint",
+            "cock fever",
+            "nut glow",
+            "jizz blush",
+            "whore rose",
+            "bang heat",
+            "goon bloom",
+        ],
+        "whisper": [
+            "cock murmur",
+            "nut breath",
+            "fuck hiss",
+            "jizz sigh",
+            "slut purr",
+            "whore moanlet",
+            "bang whimper",
+            "goon tease",
+        ],
+        "touch": [
+            "dick graze",
+            "nut brush",
+            "fuck contact",
+            "jizz caress",
+            "slut grip",
+            "whore claw",
+            "bang grope",
+            "goon violation",
+        ],
+        "scent": [
+            "cum musk",
+            "fuck perfume",
+            "slut stench",
+            "jizz aroma",
+            "nut pheromones",
+            "whore reek",
+            "bang odor",
+            "goon bait",
+        ],
+        "tease": [
+            "cock torment",
+            "nut denial",
+            "fuck edging",
+            "jizz suffering",
+            "slut cruelty",
+            "whore mindbreak",
+            "bang frustration",
+            "goon agony",
+        ],
+        "control": [
+            "fuck dominance",
+            "slut ownership",
+            "cock tyranny",
+            "jizz rule",
+            "nut command",
+            "whore leash",
+            "bang mastery",
+            "goon dictatorship",
+        ],
+        "submission": [
+            "fuck slavery",
+            "slut surrender",
+            "cock worship",
+            "jizz devotion",
+            "nut obedience",
+            "whore grovel",
+            "bang defeat",
+            "goon servitude",
+        ],
+        "ecstasy": [
+            "nut high",
+            "cock euphoria",
+            "fuck delirium",
+            "jizz madness",
+            "slut overload",
+            "whore ruin",
+            "bang collapse",
+            "goon oblivion",
+        ],
+        "torment": [
+            "fuck torture",
+            "cock suffering",
+            "nut anguish",
+            "jizz misery",
+            "slut despair",
+            "whore agony",
+            "bang punishment",
+            "goon hell",
+        ],
+        "obsession": [
+            "dick madness",
+            "nut fixation",
+            "fuck mania",
+            "jizz possession",
+            "slut addiction",
+            "whore fever",
+            "bang compulsion",
+            "goon curse",
+        ],
+        "fantasy": [
+            "rape dream",
+            "gangbang vision",
+            "freeuse mirage",
+            "breeding hallucination",
+            "slut nightmare",
+            "whore delusion",
+            "fuck trance",
+            "goon illusion",
+        ],
+        "heaven": [
+            "cum paradise",
+            "fuck nirvana",
+            "nut utopia",
+            "jizz Eden",
+            "slut Valhalla",
+            "whore Olympus",
+            "bang Elysium",
+            "goon bliss",
+        ],
+        "hell": [
+            "fuck inferno",
+            "nut abyss",
+            "cock torment",
+            "jizz perdition",
+            "slut damnation",
+            "whore void",
+            "bang suffering",
+            "goon nightmare",
+        ]
+        # Add additional replacements as needed
+    }
+    for original_word, replacements in synonyms.items():
+        pattern = re.compile(rf"\b({original_word})\b", re.IGNORECASE)
+
+        def replacer(match):
+            new_word = random.choice(replacements)
+            if match.group(1)[0].isupper():
+                new_word = new_word.capitalize()
+            return new_word
+
+        text = pattern.sub(replacer, text)
+    return text
+
+
+# --- Constants & Setup ---
+DTYPE = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEFAULT_GENERATE_PARAMS = {
+    "do_sample": False,
+    "max_new_tokens": 80,
+}
+
+# We'll use DeepSeek‑VL instead of CogVLM now.
+MODEL_PATH = "deepseek-ai/deepseek-vl-7b-chat"
+
+# Base prompts – choose based on rating.
+SAFE_BASE_PROMPT = "Write a cute, innocent title for this image: "
+NS_BASE_PROMPT = (
+    "Generate a **highly explicit, vulgar, and pornographic** title for this image. "
+    "Describe every sexual detail in **graphic, degrading terms**—mention **ass, tits, pussy, cock, cum, fucking, begging, etc.** "
+    "The title must sound like **raw porn**, not just suggestive. Use **slutty, demeaning language** (e.g., 'whore,' 'slut,' 'fucktoy'). "
+    "Include **specific sex acts** (e.g., 'facefucking,' 'creampie,' 'anal gaping,' 'throatpie'). "
+    "If possible, imply **rough sex, domination, or humiliation** (e.g., 'choking on cock,' 'dripping with cum'). "
+    "DO NOT BE POLITE. DO NOT HOLD BACK. MAKE IT **FILTHY AND EXPLICIT**. "
+    "Example formats: "
+    "- 'Slut with huge tits begging for a rough creampie' "
+    "- 'Dumb fucktoy getting her ass stretched by a massive cock' "
+    "- 'Whore drooling on cock before swallowing a thick load' "
+    "Now generate the **most obscene, pornographic title possible** based on the image and these booru tags: "
+)
+
+# --- Helper: Possibly resize the input image ---
+def maybe_resize_image(original_path: str, max_dim=1024) -> str:
+    try:
+        with Image.open(original_path) as im:
+            w, h = im.size
+            if max(w, h) <= max_dim:
+                return original_path
+            ratio = max_dim / float(max(w, h))
+            new_w = int(w * ratio)
+            new_h = int(h * ratio)
+            resized = im.resize((new_w, new_h), Image.LANCZOS)
+            new_path = original_path + ".resized.png"
+            resized.save(new_path, "PNG")
+            return new_path
+    except Exception as e:
+        print(
+            f"Warning: could not open/resize {original_path}, using original. Error: {e}"
+        )
+        return original_path
+
+
+def load_image(image_path: str) -> Image.Image:
+    return Image.open(image_path)
+
+
+# --- Main ---
+def main():
+    if len(sys.argv) < 4:
+        print(
+            "Usage: python deepseek_title.py <image_path> <comma_separated_tags> <rating>"
+        )
+        sys.exit(1)
+
+    image_path = sys.argv[1]
+    booru_tags_str = sys.argv[2].strip()
+    rating = sys.argv[3].strip()  # e.g., "Safe", "Suggestive", or "Explicit"
+
+    # Resize image if needed
+    resized_path = maybe_resize_image(image_path, max_dim=1024)
+
+    # Choose the base prompt based on rating.
+    if rating.lower() == "safe":
+        base_prompt = SAFE_BASE_PROMPT
+    else:
+        base_prompt = NS_BASE_PROMPT
+
+    prompt_text = base_prompt + booru_tags_str
+
+    # Load the VLChatProcessor from DeepSeek‑VL; it also provides the tokenizer.
+    vl_processor = VLChatProcessor.from_pretrained(MODEL_PATH)
+    model = (
+        MultiModalityCausalLM.from_pretrained(
+            MODEL_PATH, torch_dtype=DTYPE, trust_remote_code=True
+        )
+        .to(DEVICE)
+        .eval()
+    )
+
+    def load_images_for_conversation(conversation):
+        """Load all images from a conversation"""
+        images = []
+        for turn in conversation:
+            if "images" not in turn:
+                continue
+            for img in turn["images"]:
+                if isinstance(img, str):
+                    images.append(Image.open(img).convert("RGB"))
+                elif hasattr(img, "format"):  # PIL Image
+                    images.append(img)
+        return images
+
+    conversation = [
+        {"role": "User", "content": prompt_text, "images": [load_image(resized_path)]},
+        {"role": "Assistant", "content": ""},
+    ]
+
+    # Prepare the inputs via the VLChatProcessor.
+    pil_images = load_images_for_conversation(conversation)
+    prepare_inputs = vl_processor(
+        conversations=conversation, images=pil_images, force_batchify=True
+    ).to(DEVICE)
+    # Obtain the image encoder inputs.
+    inputs_embeds = model.prepare_inputs_embeds(**prepare_inputs)
+
+    # Generate the title.
+    with torch.no_grad():
+        outputs = model.language_model.generate(
+            inputs_embeds=inputs_embeds,
+            attention_mask=prepare_inputs.attention_mask,
+            pad_token_id=vl_processor.tokenizer.eos_token_id,
+            bos_token_id=vl_processor.tokenizer.bos_token_id,
+            eos_token_id=vl_processor.tokenizer.eos_token_id,
+            **DEFAULT_GENERATE_PARAMS,
+        )
+
+    # DEBUG: Print raw outputs
+    print(f"DEBUG - Raw outputs: {outputs}", file=sys.stderr)
+    print(f"DEBUG - Outputs shape: {outputs.shape}", file=sys.stderr)
+
+    # Slice off the prompt tokens.
+    prompt_len = prepare_inputs.input_ids.shape[1]
+    outputs = outputs[:, prompt_len:]
+    
+    
+    # DEBUG: Print decoded output before processing
+    raw_result = vl_processor.tokenizer.decode(outputs[0].cpu().tolist())
+    print(f"DEBUG - Raw decoded: {raw_result}", file=sys.stderr)
+    
+    result = raw_result.strip()
+    print(f"DEBUG - After strip: {result}", file=sys.stderr)
+    # If rating is not safe, apply random word replacements.
+    if rating.lower() != "safe":
+        result = random_replace_words(result)
+
+    # Remove any trailing quotes or periods.
+        output = {
+            "title": result if result else "[NO OUTPUT GENERATED]",
+            "status": "success" if result else "empty_response",
+            "debug": {
+                "raw_output": raw_result,
+                "processed_output": result
+            }
+        }
+
+
+        print(json.dumps(result))  # Ensure this is the ONLY print output
+        sys.stdout.flush()  # Force flush the output buffer
+        sys.exit(1)
+
+    if __name__ == "__main__":
+        main()
