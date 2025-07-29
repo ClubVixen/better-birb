@@ -15,11 +15,13 @@ import { FileManipulationModule } from './file-manipulation/file-manipulation.mo
 import { CustomShortcutModule } from './custom-shortcut/custom-shortcut.module';
 import { TagConverterModule } from './tag-converter/tag-converter.module';
 import { RandomMessageModule } from 'src/server/random-message/random-message.module';
+import { TagValidationModule } from './tag-validation/tag-validation.module'; 
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     WebsitesModule,
+    TagValidationModule,
     TagGroupModule,
     EventsModule,
     SettingsModule,

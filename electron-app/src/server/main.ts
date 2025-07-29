@@ -25,6 +25,16 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe());
   app.useGlobalFilters(new HttpExceptionFilter());
   app.use(compression());
+  // Add this to see all routes
+  const server = app.getHttpServer();
+  const router = server._events.request._router;
+  console.log('Registered routes:');
+  router.stack.forEach((r: any) => {
+    if (r.route && r.route.path) {
+      console.log(`${Object.keys(r.route.methods).join(', ').toUpperCase()} ${r.route.path}`);
+    }
+  });
+  
   await app.listen(process.env.PORT);
 }
 

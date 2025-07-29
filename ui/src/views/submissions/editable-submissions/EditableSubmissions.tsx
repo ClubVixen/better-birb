@@ -21,13 +21,31 @@ import { fileFromPath } from 'formdata-node/file-from-path';
 import fs from 'fs'
 import { getAutoTagsNoUI } from '../../../services/AiTaggerService';
 import { getImageTitle } from '../../../services/AiTaggerService';
+import { Alert, Collapse, Tag } from 'antd';
 
+
+
+const { Panel } = Collapse;
 interface Props {
   submissions: SubmissionPackage<any>[];
   isLoading: boolean;
   type: SubmissionType;
   
 }
+interface TagValidationData {
+  [submissionId: string]: {
+    [site: string]: {
+      validTags: string[];
+      discardedTags: Array<{
+        tag: string;
+        valid: boolean;
+        usage: number;
+        reason?: string;
+      }>;
+    };
+  };
+}
+
 interface ExtendedSubmissionPackage extends SubmissionPackage<any> { // Use this interface
   scheduleDate?: string | Date;
   newDate?: string;
@@ -47,6 +65,7 @@ interface State {
   ignoreSites: string[];
   affectedSubmissions: ExtendedSubmissionPackage[];
   autoTagSelectModalVisible: boolean;
+  tagValidationData: TagValidationData;
   autoTagProgress: { current: number; total: number } | null;
   affectedImages: Array<{
     title: string;
@@ -91,6 +110,7 @@ export class EditableSubmissions extends React.Component<Props, State> {
     ignoreSites: [],
     affectedSubmissions: [],
     affectedImages: [],
+    tagValidationData: {},
     autoTagProgress: null,
     showAffectedImagesModal: false,
     autoTagSelectModalVisible: false,
@@ -249,22 +269,17 @@ getAutoTags = async (imagePath: string) => {
 };
 
 async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
-  // 1) Hide the modal
   this.setState({ autoTagSelectModalVisible: false });
 
-  // 2) Filter those submissions if needed 
-  // (like your generateAffectedFileSubmissions if you want to skip posted or no .primary)
   const fileSubs = this.generateAffectedFileSubmissions(submissions);
-  //Initialize progress
   this.setState({ 
     autoTagProgress: { current: 0, total: fileSubs.length } 
   });
 
-  
   const autoTaggingResults = { ...this.state.autoTaggingResults };
+  const tagValidationData: TagValidationData = {};
 
-   // 3) Loop, calling auto-tag for each image
-   for (let i = 0; i < fileSubs.length; i++) {
+  for (let i = 0; i < fileSubs.length; i++) {
     const submission = fileSubs[i];
     const primary = (submission.submission as any).primary;
     const imagePath = primary.location;
@@ -278,16 +293,55 @@ async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
     try {
       const result = await this.getAutoTags(imagePath);
       const normalizedRating = ratingMapping[result.rating.toLowerCase()] || result.rating;
-      autoTaggingResults[submission.submission._id] = {
-        tags: result.tags,
-        rating: normalizedRating,
-        title: ''
-      };
+      
+      // Get sites this submission will be posted to
+      const sites = Object.entries(submission.parts)
+        .filter(([_, part]) => !part.isDefault)
+        .map(([key, _]) => key);
+      
+      // Validate tags for each site
+      if (sites.length > 0) {
+  const validationResponse = await fetch(`http://localhost:${(window as any).PORT}/api/tag-validation/validate-for-sites`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags: result.tags, sites })
+  });
+        
+        const validationResult = await validationResponse.json();
+        
+        // Store validation data
+        tagValidationData[submission.submission._id] = {};
+        
+        validationResult.validations.forEach((validation: any) => {
+          tagValidationData[submission.submission._id][validation.site] = {
+            validTags: validation.validTags,
+            discardedTags: validation.discardedTags
+          };
+        });
+        
+        // Use the valid tags for the default result
+        const allValidTags = new Set<string>();
+        validationResult.validations.forEach((v: any) => {
+          v.validTags.forEach((t: string) => allValidTags.add(t));
+        });
+        
+        autoTaggingResults[submission.submission._id] = {
+          tags: Array.from(allValidTags),
+          rating: normalizedRating,
+          title: ''
+        };
+      } else {
+        // No sites selected, use all tags
+        autoTaggingResults[submission.submission._id] = {
+          tags: result.tags,
+          rating: normalizedRating,
+          title: ''
+        };
+      }
     } catch (error) {
       console.error('Error auto-tagging submission', error);
     }
 
-    // 4) Increment progress
     this.setState((prev) => {
       if (!prev.autoTagProgress) return null;
       const { current, total } = prev.autoTagProgress;
@@ -299,10 +353,9 @@ async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
       } as Pick<State, 'autoTagProgress'>; 
     });    
   }
- // Once done, remove progress & show modal
- this.setState({ autoTagProgress: null });
 
-  // Build edits and show modal
+  this.setState({ autoTagProgress: null });
+
   const autoTaggingEdits: { [id: string]: AutoTagEdit } = {};
   for (const id in autoTaggingResults) {
     const normalizedRating = autoTaggingResults[id].rating.charAt(0).toUpperCase() + autoTaggingResults[id].rating.slice(1);
@@ -313,14 +366,43 @@ async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
     };
   }
 
- // console.log('[Debug] Final autoTaggingEdits created for:', Object.keys(autoTaggingEdits));
-
   this.setState({
     autoTaggingResults,
     showAutoTagModal: true,
     autoTaggingEdits,
+    tagValidationData 
   });
 }
+handleReAddDiscardedTag = (submissionId: string, site: string, tag: string) => {
+  this.setState(prev => {
+    const newValidationData = { ...prev.tagValidationData };
+    const siteData = newValidationData[submissionId]?.[site];
+    
+    if (siteData) {
+      // Move tag from discarded to valid
+      siteData.validTags.push(tag);
+      siteData.discardedTags = siteData.discardedTags.filter(d => d.tag !== tag);
+      
+      // Also add to autoTaggingEdits
+      const currentEdit = prev.autoTaggingEdits![submissionId];
+      if (currentEdit && !currentEdit.tags.includes(tag)) {
+        return {
+          tagValidationData: newValidationData,
+          autoTaggingEdits: {
+            ...prev.autoTaggingEdits!,
+            [submissionId]: {
+              ...currentEdit,
+              tags: [...currentEdit.tags, tag]
+            }
+          }
+        };
+      }
+    }
+    
+    return { tagValidationData: newValidationData };
+  });
+};
+
 private async regenerateTitle(sub: SubmissionPackage<any>) {
   const submissionId = sub.submission._id;
   const edit = this.state.autoTaggingEdits?.[submissionId];
@@ -463,7 +545,7 @@ handleRatingChange = (submissionId: string, rating: string) => {
 }
 
 async finalizeAutoTagEdits() {
-  const { autoTaggingEdits } = this.state;
+  const { autoTaggingEdits, tagValidationData } = this.state;
   if (!autoTaggingEdits) return;
 
   const submissions = this.props.submissions;
@@ -471,12 +553,12 @@ async finalizeAutoTagEdits() {
     const edit = autoTaggingEdits[s.submission._id];
     if (!edit) continue;
 
-    // 1) Convert s.parts object to array of [key, part]
+    const validationInfo = tagValidationData[s.submission._id];
     const partsEntries = Object.entries(s.parts);
 
-    // 2) Update default part
     const updatedEntries = partsEntries.map(([key, part]) => {
       if (part.isDefault) {
+        // For default part, use the general edited tags
         const updatedData = {
           ...part.data,
           tags: {
@@ -484,11 +566,21 @@ async finalizeAutoTagEdits() {
             value: edit.tags
           },
           rating: ratingMap[edit.rating] || SubmissionRating.GENERAL,
-          title: edit.title  // store the final generated title
+          title: edit.title
+        };
+        return [key, { ...part, data: updatedData }] as const;
+      } else {
+        // For site-specific parts, use validated tags if available
+        const siteTags = validationInfo?.[key]?.validTags || edit.tags;
+        const updatedData = {
+          ...part.data,
+          tags: {
+            extendDefault: false,
+            value: siteTags
+          }
         };
         return [key, { ...part, data: updatedData }] as const;
       }
-      return [key, part] as const;
     });
 
     const updatedParts = Object.fromEntries(updatedEntries);
@@ -506,46 +598,36 @@ async finalizeAutoTagEdits() {
       console.error(`Failed to update submission ${s.submission._id}`, e);
       message.error(`Failed to update ${SubmissionUtil.getSubmissionTitle(s)}`);
     }
-    }
+  }
 
-    message.success('All selected submissions updated with new tags and ratings.');
-    this.setState({
+  message.success('All selected submissions updated with new tags and ratings.');
+  this.setState({
     showAutoTagModal: false,
-    autoTaggingEdits: undefined
-    });
-    }
+    autoTaggingEdits: undefined,
+    tagValidationData: {}
+  });
+}
 
 
 renderAutoTagModal() {
-  const { showAutoTagModal, autoTaggingEdits, autoTaggingResults } = this.state;
+  const { showAutoTagModal, autoTaggingEdits, autoTaggingResults, tagValidationData } = this.state;
   if (!showAutoTagModal || !autoTaggingEdits || !autoTaggingResults) return null;
 
-  // Determine which submissions are “tagged” (i.e. found in autoTaggingResults)
   const taggedSubmissions = this.props.submissions.filter(
     (s) => autoTaggingResults[s.submission._id]
   );
-
-  console.log('[Debug] renderAutoTagModal - taggedSubmissions:', taggedSubmissions.length);
-  taggedSubmissions.forEach((sub) => {
-    console.log(
-      ' -> Sub ID:',
-      sub.submission._id,
-      'tags:',
-      autoTaggingResults[sub.submission._id].tags
-    );
-  });
 
   return (
     <Modal
       title="Auto-Tagging Results"
       visible={showAutoTagModal}
-      width={800}
+      width={900}
       onCancel={() => this.setState({ showAutoTagModal: false })}
       onOk={this.finalizeAutoTagEdits.bind(this)}
       footer={[
         <Button
           key="generateAll"
-          onClick={() => this.generateAllTitles()} // calls our new function
+          onClick={() => this.generateAllTitles()}
         >
           Generate All Titles
         </Button>,
@@ -558,110 +640,179 @@ renderAutoTagModal() {
         </Button>
       ]}
     >
-      <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
-      <List
-  dataSource={taggedSubmissions}
-  renderItem={(submission) => {
-    const edit = autoTaggingEdits[submission.submission._id];
-    if (!edit) return null;
-    let previewUrl = '';
-    if (submission.submission.type === SubmissionType.FILE) {
-      const fileSub = submission.submission as any;
-      previewUrl = fileSub.primary?.preview || '';
-    }
-    return (
-      <List.Item key={submission.submission._id}>
-        <List.Item.Meta
-          avatar={
-            previewUrl ? (
-              <img
-                src={previewUrl}
-                alt={submission.submission.title}
-                style={{ maxWidth: '250px', height: 'auto' }}
-              />
-            ) : null
-          }
-          title={
-            <>
-              {SubmissionUtil.getSubmissionTitle(submission)}
-              <br />
-              <small style={{ color: 'gray' }}>Title: {autoTaggingResults[submission.submission._id].title}</small>
-            </>
-          }
-          description={
-            <>
-              <div>
-                <strong>Tags:</strong>
-                <div>
-                  {autoTaggingResults[submission.submission._id].tags.map(tag => (
-                    <Checkbox
-                      key={tag}
-                      checked={edit.tags.includes(tag)}
-                      onChange={e =>
-                        this.handleTagCheckboxChange(submission.submission._id, tag, e.target.checked)
-                      }
-                    >
-                      {tag}
-                    </Checkbox>
-                  ))}
-                </div>
-              </div>
-              <div style={{ marginTop: '10px' }}>
-                <strong>Rating:</strong>
-                <Radio.Group
-                  value={edit.rating}
-                  onChange={e => this.handleRatingChange(submission.submission._id, e.target.value)}
-                >
-                  <Radio value="Safe">Safe</Radio>
-                  <Radio value="Suggestive">Suggestive</Radio>
-                  <Radio value="Explicit">Explicit</Radio>
-                </Radio.Group>
-              </div>
-              <div style={{ marginTop: '10px' }}>
-                <strong>Generated Title:</strong> {autoTaggingResults[submission.submission._id].title}
-                <Button
-                  type="link"
-                  onClick={async () => {
-                    const newTitle = await getImageTitle(
-                      (submission.submission as any).primary.location,
-                      autoTaggingEdits[submission.submission._id].tags,
-                      autoTaggingEdits[submission.submission._id].rating  // pass rating
-                    );
-                    this.setState(prev => ({
-                      autoTaggingEdits: {
-                        ...prev.autoTaggingEdits!,
-                        [submission.submission._id]: {
-                          ...prev.autoTaggingEdits![submission.submission._id],
-                          title: newTitle
-                        }
-                      },
-                      autoTaggingResults: {
-                        ...prev.autoTaggingResults,
-                        [submission.submission._id]: {
-                          ...prev.autoTaggingResults[submission.submission._id],
-                          title: newTitle
-                        }
-                      }
-                    }));
-                  }}
-                >
-                  Regenerate Title
-                </Button>
-              </div>
-            </>
-          }
+      <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+        <List
+          dataSource={taggedSubmissions}
+          renderItem={(submission) => {
+            const edit = autoTaggingEdits[submission.submission._id];
+            if (!edit) return null;
+            
+            const validationInfo = tagValidationData[submission.submission._id];
+            const hasDiscardedTags = validationInfo && 
+              Object.values(validationInfo).some(v => v.discardedTags.length > 0);
+            
+            let previewUrl = '';
+            if (submission.submission.type === SubmissionType.FILE) {
+              const fileSub = submission.submission as any;
+              previewUrl = fileSub.primary?.preview || '';
+            }
+            
+            return (
+              <List.Item key={submission.submission._id}>
+                <List.Item.Meta
+                  avatar={
+                    previewUrl ? (
+                      <img
+                        src={previewUrl}
+                        alt={submission.submission.title}
+                        style={{ maxWidth: '250px', height: 'auto' }}
+                      />
+                    ) : null
+                  }
+                  title={
+                    <>
+                      {SubmissionUtil.getSubmissionTitle(submission)}
+                      <br />
+                      <small style={{ color: 'gray' }}>
+                        Title: {autoTaggingResults[submission.submission._id].title}
+                      </small>
+                    </>
+                  }
+                  description={
+                    <>
+                      <div>
+                        <strong>Tags:</strong>
+                        <div>
+                          {autoTaggingResults[submission.submission._id].tags.map(tag => (
+                            <Checkbox
+                              key={tag}
+                              checked={edit.tags.includes(tag)}
+                              onChange={e =>
+                                this.handleTagCheckboxChange(
+                                  submission.submission._id, 
+                                  tag, 
+                                  e.target.checked
+                                )
+                              }
+                            >
+                              {tag}
+                            </Checkbox>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      {/* Show validation warnings */}
+                      {hasDiscardedTags && validationInfo && (
+                        <Collapse 
+                          style={{ marginTop: '10px', background: 'transparent' }}
+                          defaultActiveKey={[]}
+                        >
+                          <Panel 
+                            header={
+                              <span style={{ color: '#ff4d4f' }}>
+                                ⚠️ Some tags were removed for certain sites
+                              </span>
+                            } 
+                            key="validation"
+                          >
+                            {Object.entries(validationInfo).map(([site, data]) => {
+                              if (data.discardedTags.length === 0) return null;
+                              
+                              return (
+                                <Alert
+                                  key={site}
+                                  message={`Tags removed from ${site}`}
+                                  description={
+                                    <div>
+                                      {data.discardedTags.map(discarded => (
+                                        <div key={discarded.tag} style={{ marginBottom: '8px' }}>
+                                          <Tag color="error">{discarded.tag}</Tag>
+                                          <span style={{ fontSize: '12px', color: '#666' }}>
+                                            {discarded.reason}
+                                          </span>
+                                          <Button
+                                            size="small"
+                                            type="link"
+                                            onClick={() => 
+                                              this.handleReAddDiscardedTag(
+                                                submission.submission._id,
+                                                site,
+                                                discarded.tag
+                                              )
+                                            }
+                                          >
+                                            Add anyway
+                                          </Button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  }
+                                  type="warning"
+                                  style={{ marginBottom: '8px' }}
+                                />
+                              );
+                            })}
+                          </Panel>
+                        </Collapse>
+                      )}
+                      
+                      <div style={{ marginTop: '10px' }}>
+                        <strong>Rating:</strong>
+                        <Radio.Group
+                          value={edit.rating}
+                          onChange={e => 
+                            this.handleRatingChange(submission.submission._id, e.target.value)
+                          }
+                        >
+                          <Radio value="Safe">Safe</Radio>
+                          <Radio value="Suggestive">Suggestive</Radio>
+                          <Radio value="Explicit">Explicit</Radio>
+                        </Radio.Group>
+                      </div>
+                      
+                      <div style={{ marginTop: '10px' }}>
+                        <strong>Generated Title:</strong> 
+                        {autoTaggingResults[submission.submission._id].title}
+                        <Button
+                          type="link"
+                          onClick={async () => {
+                            const newTitle = await getImageTitle(
+                              (submission.submission as any).primary.location,
+                              autoTaggingEdits[submission.submission._id].tags,
+                              autoTaggingEdits[submission.submission._id].rating
+                            );
+                            this.setState(prev => ({
+                              autoTaggingEdits: {
+                                ...prev.autoTaggingEdits!,
+                                [submission.submission._id]: {
+                                  ...prev.autoTaggingEdits![submission.submission._id],
+                                  title: newTitle
+                                }
+                              },
+                              autoTaggingResults: {
+                                ...prev.autoTaggingResults,
+                                [submission.submission._id]: {
+                                  ...prev.autoTaggingResults[submission.submission._id],
+                                  title: newTitle
+                                }
+                              }
+                            }));
+                          }}
+                        >
+                          Regenerate
+                        </Button>
+                      </div>
+                    </>
+                  }
+                />
+              </List.Item>
+            );
+          }}
         />
-      </List.Item>
-    );
-  }}
-/>
-
-       
       </div>
     </Modal>
   );
 }
-
 
 
 
