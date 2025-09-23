@@ -8,3 +8,5 @@ bitsandbytes==0.43.1
 einops==0.8.0
 torchvision==0.18.1
 accelerate==0.31.0
+attrdict
+timm>=0.9.16
