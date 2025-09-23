@@ -10,7 +10,7 @@ const util = require('./utils');
 const settingsPath = path.join(global.BASE_DIRECTORY, 'data', 'settings.json');
 fs.ensureFileSync(settingsPath);
 const settings = init();
-const settingDefaults: Settings = {
+const settingDefaults = {
   advertise: true,
   emptyQueueOnFailedPost: true,
   postRetries: 0,
@@ -25,6 +25,7 @@ const settingDefaults: Settings = {
   defaultTagSearchProvider: 'none',
   proxy: '',
   quitOnClose: false,
+  titleGeneratorUrl: 'http://127.0.0.1:37913/generate',
 };
 settings.defaults(settingDefaults).write();
 

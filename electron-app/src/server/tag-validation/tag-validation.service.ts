@@ -1,9 +1,7 @@
 // File: electron-app/src/server/tag-validation/tag-validation.service.ts
 
-import { Injectable, HttpService } from '@nestjs/common';
-import { map, catchError } from 'rxjs/operators';
-import { of } from 'rxjs';
-import { AxiosResponse } from 'axios';
+import { Injectable } from '@nestjs/common';
+// import Http from '../http/http.util'; // This was moved to be lazy-loaded to prevent startup crash
 
 export interface TagValidationResult {
   tag: string;
@@ -16,7 +14,10 @@ export interface SiteTagValidation {
   site: string;
   validTags: string[];
   discardedTags: TagValidationResult[];
+  _allResultsForLogging?: TagValidationResult[]; // Optional property for detailed logging
 }
+
+let Http: any = null;
 
 @Injectable()
 export class TagValidationService {
@@ -25,32 +26,44 @@ export class TagValidationService {
   private lastRequestTime = new Map<string, number>();
   private readonly RATE_LIMIT_DELAY = 600; // ms between requests (safe for both sites)
   
-  constructor(private readonly http: HttpService) {}
+  constructor() {}
+  
+  private _getHttp() {
+    if (!Http) {
+      Http = require('../http/http.util').default;
+    }
+    return Http;
+  }
 
   async validateTagsForSite(
     tags: string[], 
     site: string
   ): Promise<SiteTagValidation> {
+    const siteName = site.split('-')[0].toLowerCase();
+    const supportedSites = ['derpibooru', 'e621'];
     // Only validate for booru sites
-    if (site !== 'e621' && site !== 'derpibooru') {
+    if (!supportedSites.includes(siteName)) {
       return {
         site,
         validTags: tags,
-        discardedTags: []
+        discardedTags: [],
+        _allResultsForLogging: tags.map(t => ({ tag: t, valid: true, usage: -1, reason: 'Site not validated' }))
       };
     }
 
+    const allResults: TagValidationResult[] = [];
     const validTags: string[] = [];
     const discardedTags: TagValidationResult[] = [];
     
     // First apply transformations
-    const transformedTags = this.transformTags(tags, site);
+    const transformedTags = this.transformTags(tags, siteName);
     
     for (const tag of transformedTags) {
       // Rate limiting
-      await this.enforceRateLimit(site);
+      await this.enforceRateLimit(siteName);
       
-      const validation = await this.validateSingleTag(tag, site);
+      const validation = await this.validateSingleTag(tag, siteName);
+      allResults.push(validation);
       
       if (validation.valid) {
         validTags.push(tag);
@@ -59,7 +72,7 @@ export class TagValidationService {
       }
     }
     
-    return { site, validTags, discardedTags };
+    return { site, validTags, discardedTags, _allResultsForLogging: allResults };
   }
 
   private async enforceRateLimit(site: string): Promise<void> {
@@ -79,36 +92,40 @@ export class TagValidationService {
     tag: string, 
     site: string
   ): Promise<TagValidationResult> {
-    const cacheKey = `${site}:${tag}`;
+    const siteName = site.split('-')[0].toLowerCase();
+    const cacheKey = `${siteName}:${tag}`;
     
     if (this.tagCache.has(cacheKey)) {
       return this.tagCache.get(cacheKey)!;
     }
     
     try {
-      const apiUrl = this.getTagApiUrl(tag, site);
-      const headers = this.getHeaders(site);
+      const http = this._getHttp();
+      const apiUrl = this.getTagApiUrl(tag, siteName);
+      const headers = this.getHeaders(siteName);
       
-      const response = await this.http
-        .get<any>(apiUrl, { headers })
-        .pipe(
-          map((res: AxiosResponse) => res.data),
-          catchError((error) => {
-            console.error(`Error validating tag "${tag}" on ${site}:`, error.message);
-            return of(null);
-          })
-        )
-        .toPromise();
+      const res = await http.get(apiUrl, undefined, {
+        headers,
+        requestOptions: { json: true },
+      });
 
+      let response: any = null;
+      if (res.error) {
+        console.error(`Error validating tag "${tag}" on ${siteName}:`, res.error.message);
+      } else {
+        response = res.body;
+      }
+      
       let usage = 0;
       
       if (response) {
-        if (site === 'e621' && Array.isArray(response) && response.length > 0) {
+        if (siteName === 'e621' && Array.isArray(response) && response.length > 0) {
           usage = response[0].post_count || 0;
-        } else if (site === 'derpibooru') {
-          // Derpibooru returns the tag directly if found
-          if (response.tag) {
-            usage = response.tag.images || 0;
+        } else if (siteName === 'derpibooru') {
+          if (response && Array.isArray(response.tags) && response.tags.length > 0) {
+            // Derpibooru returns an array of tags, even for an exact match.
+            // The first result is the one we want. It also correctly handles aliases.
+            usage = response.tags[0].images || 0;
           }
         }
       }
@@ -125,7 +142,7 @@ export class TagValidationService {
       this.tagCache.set(cacheKey, result);
       return result;
     } catch (error) {
-      console.error(`Failed to validate tag "${tag}" on ${site}:`, error);
+      console.error(`Failed to validate tag "${tag}" on ${siteName}:`, error);
       const result = {
         tag,
         valid: false,
@@ -155,24 +172,28 @@ export class TagValidationService {
   }
 
   private getTagApiUrl(tag: string, site: string): string {
-    const encodedTag = encodeURIComponent(tag);
-    
     switch (site) {
-      case 'e621':
+      case 'e621': {
+        const encodedTag = encodeURIComponent(tag);
         return `https://e621.net/tags.json?search[name]=${encodedTag}`;
-      case 'derpibooru':
+      }
+      case 'derpibooru': {
+        // Derpibooru's standard search query uses standard URL encoding (%20 for spaces).
+        const encodedTag = encodeURIComponent(tag);
         return `https://derpibooru.org/api/v1/json/search/tags?q=${encodedTag}`;
+      }
       default:
         throw new Error(`Unsupported site: ${site}`);
     }
   }
 
   private transformTags(tags: string[], site: string): string[] {
+    const siteName = site.split('-')[0].toLowerCase();
     const transformedTags = tags.map(tag => {
       const lowerTag = tag.toLowerCase();
       
       // Apply skin->fur transformations for pony content on booru sites
-      if ((site === 'e621' || site === 'derpibooru') && this.hasPonyIndicator(tags)) {
+      if ((siteName === 'e621' || siteName === 'derpibooru') && this.hasPonyIndicator(tags)) {
         const skinColors = ['blue', 'green', 'yellow', 'pink', 'purple', 'orange', 'red', 'white', 'black', 'gray', 'grey', 'brown', 'tan'];
         for (const color of skinColors) {
           if (lowerTag === `${color}_skin` || lowerTag === `${color} skin`) {
@@ -181,7 +202,7 @@ export class TagValidationService {
         }
         
         // Derpibooru-specific transformations
-        if (site === 'derpibooru' && lowerTag === 'horse') {
+        if (siteName === 'derpibooru' && lowerTag === 'horse') {
           return 'pony';
         }
       }
@@ -198,7 +219,7 @@ export class TagValidationService {
     });
     
     // Apply site-specific formatting
-    return this.formatTagsForSite(transformedTags, site);
+    return this.formatTagsForSite(transformedTags, siteName);
   }
 
   private formatTagsForSite(tags: string[], site: string): string[] {
@@ -212,9 +233,10 @@ export class TagValidationService {
         );
         break;
       case 'derpibooru':
-        // Derpibooru uses spaces and lowercase
-        formattedTags = formattedTags.map(tag => 
-          tag.toLowerCase().replace(/_/g, ' ')
+        // Derpibooru uses spaces and lowercase.
+        // Replace any combination of underscores and whitespace with a single space.
+        formattedTags = formattedTags.map(tag =>
+          tag.toLowerCase().replace(/[_\s]+/g, ' ').trim()
         );
         break;
     }

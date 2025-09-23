@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { BrowserWindow, LoadURLOptions, session } from 'electron';
+import type { Cookie, Session, CookiesSetDetails } from 'electron';
 import _ from 'lodash';
 import lowdb from 'lowdb';
 import { Settings } from 'postybirb-commons';
@@ -36,11 +37,11 @@ export default class Http {
     },
   });
 
-  static parseCookies(cookies: Electron.Cookie[]) {
+  static parseCookies(cookies: Cookie[]) {
     return cookies.map(c => `${c.name}=${c.value}`).join('; ');
   }
 
-  static async getWebsiteCookies(partitionId: string, url: string): Promise<Electron.Cookie[]> {
+  static async getWebsiteCookies(partitionId: string, url: string): Promise<Cookie[]> {
     return await session.fromPartition(`persist:${partitionId}`).cookies.get({
       url: new URL(url).origin,
     });
@@ -48,7 +49,7 @@ export default class Http {
 
   static async retrieveCookieString(
     url: string,
-    ses: Electron.Session,
+    ses: Session,
     cookies?: string,
   ): Promise<string> {
     if (cookies) {
@@ -74,7 +75,7 @@ export default class Http {
       cookies
         .filter(c => c.session)
         .map(c => {
-          const cookie: Electron.CookiesSetDetails = {
+          const cookie: CookiesSetDetails = {
             ...CookieConverter.convertCookie(c),
             expirationDate: expirationDate.valueOf() / 1000,
           };
@@ -110,7 +111,7 @@ export default class Http {
     options: GetOptions = {},
   ): Promise<HttpResponse<T>> {
     options = options || {};
-    let ses: Electron.Session;
+    let ses: Session;
     options = options || {};
     if (partitionId) {
       ses = session.fromPartition(`persist:${partitionId}`);
@@ -141,7 +142,7 @@ export default class Http {
           future = new Date(future.setMonth(future.getMonth() + 2));
           for (const c of cookies) {
             c.domain = c.domain || response.request.host;
-            const cc = CookieConverter.convertCookie(c as Electron.Cookie);
+            const cc = CookieConverter.convertCookie(c as Cookie);
             cc.expirationDate = future.valueOf() / 1000;
             await ses.cookies.set(cc);
           }
@@ -173,7 +174,7 @@ export default class Http {
     partitionId: string | undefined,
     options: PostOptions,
   ): Promise<HttpResponse<T>> {
-    let ses: Electron.Session;
+    let ses: Session;
     options = options || {};
     if (partitionId) {
       ses = session.fromPartition(`persist:${partitionId}`);

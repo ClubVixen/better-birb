@@ -480,7 +480,7 @@ export class SubmissionService {
       ? this.validatorService.validateParts(submission, parts)
       : {};
     for (const p of Object.values(problems)) {
-      if (p.problems.length) {
+      if ((p as any).problems.length) {
         hasProblems = true;
         break;
       }

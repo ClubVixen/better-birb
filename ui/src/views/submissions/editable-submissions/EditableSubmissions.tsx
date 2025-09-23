@@ -22,6 +22,7 @@ import fs from 'fs'
 import { getAutoTagsNoUI } from '../../../services/AiTaggerService';
 import { getImageTitle } from '../../../services/AiTaggerService';
 import { Alert, Collapse, Tag } from 'antd';
+import SettingsService from '../../../services/settings.service';
 
 
 
@@ -46,7 +47,8 @@ interface TagValidationData {
   };
 }
 
-interface ExtendedSubmissionPackage extends SubmissionPackage<any> { // Use this interface
+// FIX: Extend SubmissionPackage<Submission> instead of any
+type ExtendedSubmissionPackage = SubmissionPackage<Submission> & { 
   scheduleDate?: string | Date;
   newDate?: string;
 }
@@ -92,6 +94,8 @@ interface State {
   autoTaggingEdits?: {
     [submissionId: string]: AutoTagEdit;
   };
+  settingsModalVisible?: boolean;
+  titleGeneratorUrl?: string;
 }
 const ratingMap = {
   'Safe': SubmissionRating.GENERAL,
@@ -100,44 +104,68 @@ const ratingMap = {
 };
 
 export class EditableSubmissions extends React.Component<Props, State> {
-  state: State = {
-    search: '',
-    deleteModalVisible: false,
-    postModalVisible: false,
-    scheduleManyModalVisible: false,
-    enableCascade: false,
-    applyCascadeToAllSites: false,
-    ignoreSites: [],
-    affectedSubmissions: [],
-    affectedImages: [],
-    tagValidationData: {},
-    autoTagProgress: null,
-    showAffectedImagesModal: false,
-    autoTagSelectModalVisible: false,
-    scheduleManyPeriod: {
-      d: 0,
-      h: 0,
-      m: 1,
-      time: moment(),
-    },
-    enableAutoTagging: false,
-  autoTaggingResults: {},
-  };
-  
+  constructor(props: Props) {
+    super(props);
+    this.state = {
+      search: '',
+      deleteModalVisible: false,
+      postModalVisible: false,
+      scheduleManyModalVisible: false,
+      enableCascade: false,
+      applyCascadeToAllSites: false,
+      ignoreSites: [],
+      affectedSubmissions: [],
+      affectedImages: [],
+      tagValidationData: {},
+      autoTagProgress: null,
+      showAffectedImagesModal: false,
+      autoTagSelectModalVisible: false,
+      scheduleManyPeriod: {
+        d: 0,
+        h: 0,
+        m: 1,
+        time: moment(),
+      },
+      enableAutoTagging: false,
+      autoTaggingResults: {},
+      settingsModalVisible: false,
+      titleGeneratorUrl: '',
+    };
+  }
 
-  handleSearch = ({ target }) => this.setState({ search: target.value.toLowerCase() });
-  handleIgnoreSitesChange(selectedSites: string[]) {
-    this.setState({ ignoreSites: selectedSites });
+  componentDidMount() {
+    this.loadSettings();
   }
   
-  deleteSubmissions(submissions: SubmissionPackage<any>[]) {
+  loadSettings = () => {
+    SettingsService.getSettings().then(({ data }) => {
+      this.setState({ titleGeneratorUrl: data.titleGeneratorUrl || '' });
+    });
+  };
+  
+  handleSaveSettings = () => {
+    SettingsService.updateSetting('titleGeneratorUrl', this.state.titleGeneratorUrl);
+    message.success('Settings saved. The new URL will be used for future requests.');
+    this.setState({ settingsModalVisible: false });
+  };
+
+  // FIX: Convert all methods to arrow functions to bind `this`
+  handleSearch = ({ target }: { target: { value: string } }) => {
+    this.setState({ search: target.value.toLowerCase() });
+  };
+  
+  handleIgnoreSitesChange = (selectedSites: string[]) => {
+    this.setState({ ignoreSites: selectedSites });
+  };
+  
+  deleteSubmissions = (submissions: SubmissionPackage<any>[]) => {
     this.setState({ deleteModalVisible: false });
     Promise.all(
       submissions.map(s => SubmissionService.deleteSubmission(s.submission._id))
     ).finally(() => message.success('Submissions deleted.'));
-  }
+  };
 
-  async postSubmissions(submissions: SubmissionPackage<any>[]) {
+  postSubmissions = async (submissions: SubmissionPackage<any>[]) => {
     this.setState({ postModalVisible: false });
     for (let i = 0; i < submissions.length; i++) {
       try {
@@ -148,9 +176,9 @@ export class EditableSubmissions extends React.Component<Props, State> {
     }
 
     message.success('Submissions queued.');
-  }
+  };
 // Function to handle cascading schedule
-async cascadeReschedule(date: moment.Moment, platform: string) {
+cascadeReschedule = async (date: moment.Moment, platform: string) => {
   let rescheduleDate = moment(date).add(
     this.state.scheduleManyPeriod.d,
     'days'
@@ -160,13 +188,13 @@ async cascadeReschedule(date: moment.Moment, platform: string) {
 
   const platformSubmissions = this.props.submissions.filter(
     s =>
-      s.submission.platform === platform &&
-      moment(s.submission.scheduledDate).isSameOrAfter(date)
+      (s.submission as any).platform === platform &&
+      moment(s.submission.schedule.postAt).isSameOrAfter(date)
   );
 
   // Sort submissions by date
   platformSubmissions.sort((a, b) =>
-    moment(a.submission.scheduledDate).diff(b.submission.scheduledDate)
+    moment(a.submission.schedule.postAt).diff(b.submission.schedule.postAt)
   );
 
   for (let submission of platformSubmissions) {
@@ -179,15 +207,15 @@ async cascadeReschedule(date: moment.Moment, platform: string) {
     rescheduleDate.add(this.state.scheduleManyPeriod.h, 'hours');
     rescheduleDate.add(this.state.scheduleManyPeriod.m, 'minutes');
   }
-}
+};
 
 //AUTO TAGGING
 // --------------------------------------------------------------------------
 // 1) Helper to gather only "affected" file submissions
 // --------------------------------------------------------------------------
-private generateAffectedFileSubmissions(
+private generateAffectedFileSubmissions = (
   submissions: SubmissionPackage<any>[]
-): ExtendedSubmissionPackage[] {
+): ExtendedSubmissionPackage[] => {
   console.log(
     '[Debug] generateAffectedFileSubmissions called with submissions:',
     submissions.length
@@ -253,7 +281,7 @@ private generateAffectedFileSubmissions(
   );
 
   return extended;
-}
+};
 
 
 
@@ -268,7 +296,7 @@ getAutoTags = async (imagePath: string) => {
   return result; // { tags: string[], rating: string }
 };
 
-async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
+handleAutoTagSubmissions = async (submissions: SubmissionPackage<any>[]) => {
   this.setState({ autoTagSelectModalVisible: false });
 
   const fileSubs = this.generateAffectedFileSubmissions(submissions);
@@ -296,18 +324,12 @@ async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
       
       // Get sites this submission will be posted to
       const sites = Object.entries(submission.parts)
-        .filter(([_, part]) => !part.isDefault)
+        .filter(([_, part]) => !(part as any).isDefault)
         .map(([key, _]) => key);
       
       // Validate tags for each site
       if (sites.length > 0) {
-  const validationResponse = await fetch(`http://localhost:${(window as any).PORT}/api/tag-validation/validate-for-sites`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tags: result.tags, sites })
-  });
-        
-        const validationResult = await validationResponse.json();
+        const validationResult = await (window as any).tagValidatorApi.validateTags(result.tags, sites);
         
         // Store validation data
         tagValidationData[submission.submission._id] = {};
@@ -372,7 +394,7 @@ async handleAutoTagSubmissions(submissions: SubmissionPackage<any>[]) {
     autoTaggingEdits,
     tagValidationData 
   });
-}
+};
 handleReAddDiscardedTag = (submissionId: string, site: string, tag: string) => {
   this.setState(prev => {
     const newValidationData = { ...prev.tagValidationData };
@@ -403,7 +425,7 @@ handleReAddDiscardedTag = (submissionId: string, site: string, tag: string) => {
   });
 };
 
-private async regenerateTitle(sub: SubmissionPackage<any>) {
+private regenerateTitle = async (sub: SubmissionPackage<any>) => {
   const submissionId = sub.submission._id;
   const edit = this.state.autoTaggingEdits?.[submissionId];
   if (!edit) return; // no data?
@@ -434,9 +456,9 @@ private async regenerateTitle(sub: SubmissionPackage<any>) {
     console.error('Error regenerating title', err);
     message.error('Failed to regenerate title');
   }
-}
+};
 
-private async generateAllTitles() {
+private generateAllTitles = async () => {
   const { autoTaggingEdits } = this.state;
   if (!autoTaggingEdits) return;
 
@@ -518,7 +540,7 @@ private async generateAllTitles() {
   }
 
   message.success('All titles generated!');
-}
+};
 
 handleTagCheckboxChange = (submissionId: string, tag: string, checked: boolean) => {
   this.setState(prev => {
@@ -533,7 +555,7 @@ handleTagCheckboxChange = (submissionId: string, tag: string, checked: boolean) 
       }
     };
   });
-}
+};
 
 handleRatingChange = (submissionId: string, rating: string) => {
   this.setState(prev => ({
@@ -542,9 +564,9 @@ handleRatingChange = (submissionId: string, rating: string) => {
       [submissionId]: { ...prev.autoTaggingEdits![submissionId], rating }
     }
   }));
-}
+};
 
-async finalizeAutoTagEdits() {
+finalizeAutoTagEdits = async () => {
   const { autoTaggingEdits, tagValidationData } = this.state;
   if (!autoTaggingEdits) return;
 
@@ -557,10 +579,10 @@ async finalizeAutoTagEdits() {
     const partsEntries = Object.entries(s.parts);
 
     const updatedEntries = partsEntries.map(([key, part]) => {
-      if (part.isDefault) {
+      if ((part as any).isDefault) {
         // For default part, use the general edited tags
         const updatedData = {
-          ...part.data,
+          ...((part as any).data || {}),
           tags: {
             extendDefault: false,
             value: edit.tags
@@ -568,18 +590,18 @@ async finalizeAutoTagEdits() {
           rating: ratingMap[edit.rating] || SubmissionRating.GENERAL,
           title: edit.title
         };
-        return [key, { ...part, data: updatedData }] as const;
+        return [key, { ...(part as any), data: updatedData }] as const;
       } else {
         // For site-specific parts, use validated tags if available
         const siteTags = validationInfo?.[key]?.validTags || edit.tags;
         const updatedData = {
-          ...part.data,
+          ...((part as any).data || {}),
           tags: {
             extendDefault: false,
             value: siteTags
           }
         };
-        return [key, { ...part, data: updatedData }] as const;
+        return [key, { ...(part as any), data: updatedData }] as const;
       }
     });
 
@@ -606,10 +628,10 @@ async finalizeAutoTagEdits() {
     autoTaggingEdits: undefined,
     tagValidationData: {}
   });
-}
+};
 
 
-renderAutoTagModal() {
+renderAutoTagModal = () => {
   const { showAutoTagModal, autoTaggingEdits, autoTaggingResults, tagValidationData } = this.state;
   if (!showAutoTagModal || !autoTaggingEdits || !autoTaggingResults) return null;
 
@@ -623,18 +645,18 @@ renderAutoTagModal() {
       visible={showAutoTagModal}
       width={900}
       onCancel={() => this.setState({ showAutoTagModal: false })}
-      onOk={this.finalizeAutoTagEdits.bind(this)}
+      onOk={this.finalizeAutoTagEdits}
       footer={[
         <Button
           key="generateAll"
-          onClick={() => this.generateAllTitles()}
+          onClick={this.generateAllTitles}
         >
           Generate All Titles
         </Button>,
         <Button
           key="submit"
           type="primary"
-          onClick={this.finalizeAutoTagEdits.bind(this)}
+          onClick={this.finalizeAutoTagEdits}
         >
           OK
         </Button>
@@ -643,13 +665,14 @@ renderAutoTagModal() {
       <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
         <List
           dataSource={taggedSubmissions}
-          renderItem={(submission) => {
+          renderItem={(submission: SubmissionPackage<any>) => {
             const edit = autoTaggingEdits[submission.submission._id];
             if (!edit) return null;
             
             const validationInfo = tagValidationData[submission.submission._id];
+            // FIX: Add type assertion
             const hasDiscardedTags = validationInfo && 
-              Object.values(validationInfo).some(v => v.discardedTags.length > 0);
+              Object.values(validationInfo).some(v => (v as any).discardedTags.length > 0);
             
             let previewUrl = '';
             if (submission.submission.type === SubmissionType.FILE) {
@@ -716,7 +739,8 @@ renderAutoTagModal() {
                             key="validation"
                           >
                             {Object.entries(validationInfo).map(([site, data]) => {
-                              if (data.discardedTags.length === 0) return null;
+                              // FIX: Add type assertion
+                              if ((data as any).discardedTags.length === 0) return null;
                               
                               return (
                                 <Alert
@@ -724,7 +748,8 @@ renderAutoTagModal() {
                                   message={`Tags removed from ${site}`}
                                   description={
                                     <div>
-                                      {data.discardedTags.map(discarded => (
+                                      {/* FIX: Add type assertion */}
+                                      {(data as any).discardedTags.map((discarded: any) => (
                                         <div key={discarded.tag} style={{ marginBottom: '8px' }}>
                                           <Tag color="error">{discarded.tag}</Tag>
                                           <span style={{ fontSize: '12px', color: '#666' }}>
@@ -812,7 +837,7 @@ renderAutoTagModal() {
       </div>
     </Modal>
   );
-}
+};
 
 
 
@@ -821,13 +846,13 @@ renderAutoTagModal() {
 
 
 //SCHEDULE RE DONE
-async scheduleSubmissions(submissions: SubmissionPackage<any>[]) {
+scheduleSubmissions = async (submissions: SubmissionPackage<any>[]) => {
   const { ignoreSites, applyCascadeToAllSites, enableCascade } = this.state;
 
   const allScheduledSubmissions = await SubmissionService.getScheduledSubmissions();
 
   const filteredSubmissions = submissions.filter(submission => {
-    const websites = Object.values(submission.parts || {}).map(part => part.website);
+    const websites = Object.values(submission.parts || {}).map(part => (part as any).website);
     if (applyCascadeToAllSites) return true;
     return !websites.some(site => ignoreSites.includes(site));
   });
@@ -857,14 +882,14 @@ async scheduleSubmissions(submissions: SubmissionPackage<any>[]) {
   });
 
   this.confirmScheduleSubmissions(updatedSubmissions)
-}
+};
 
-generateAffectedSubmissionsList(submissions: SubmissionPackage<any>[], startAt: moment.Moment) {
+generateAffectedSubmissionsList = (submissions: SubmissionPackage<any>[], startAt: moment.Moment) => {
   const { ignoreSites, applyCascadeToAllSites } = this.state;
 
   const affectedSubmissions = submissions
     .filter(submission => {
-      const websites = Object.values(submission.parts || {}).map(part => part.website);
+      const websites = Object.values(submission.parts || {}).map(part => (part as any).website);
       const isAfterStart = moment(submission.submission.schedule.postAt).isSameOrAfter(startAt);
       if (applyCascadeToAllSites) return isAfterStart && !submission.submission.posted;
       return isAfterStart && !websites.some(site => ignoreSites.includes(site)) && !submission.submission.posted;
@@ -880,11 +905,11 @@ generateAffectedSubmissionsList(submissions: SubmissionPackage<any>[], startAt: 
     } as ExtendedSubmissionPackage));
 
   this.setState({ affectedSubmissions, showAffectedImagesModal: true });
-}
+};
 
 
 
-confirmScheduleSubmissions(submissions: ExtendedSubmissionPackage[]) {
+confirmScheduleSubmissions = (submissions: ExtendedSubmissionPackage[]) => {
   Promise.all(
     submissions.map(submission => {
       // Use the newDate if it exists, otherwise fall back to the original date
@@ -911,16 +936,16 @@ confirmScheduleSubmissions(submissions: ExtendedSubmissionPackage[]) {
         scheduleManyModalVisible: false,
       });
     });
-}
+};
 
 
 
 
 
-generateAffectedImagesList(
+generateAffectedImagesList = (
   submissions: SubmissionPackage<any>[],
   startAt: moment.Moment
-) {
+) => {
   const { ignoreSites, applyCascadeToAllSites } = this.state;
 
   console.log("Starting date for cascading:", startAt.format('YYYY-MM-DD HH:mm:ss'));
@@ -928,7 +953,7 @@ generateAffectedImagesList(
   // Sort submissions by original schedule date
   const sortedSubmissions = submissions
     .filter(submission => {
-      const websites = Object.values(submission.parts || {}).map(part => part.website);
+      const websites = Object.values(submission.parts || {}).map(part => (part as any).website);
       if (applyCascadeToAllSites) return true;
       return !websites.some(site => ignoreSites.includes(site));
     })
@@ -956,7 +981,7 @@ generateAffectedImagesList(
 
   console.log("Affected Images List:", affectedImages);
   this.setState({ affectedImages, showAffectedImagesModal: true });
-}
+};
 
 
 
@@ -967,7 +992,7 @@ generateAffectedImagesList(
 toggleCascade = () => {
   this.setState({ enableCascade: !this.state.enableCascade });
 };
-  onDragEnd(result: DropResult) {
+  onDragEnd = (result: DropResult) => {
     const { source, destination } = result;
     if (!destination) {
       return;
@@ -982,7 +1007,7 @@ toggleCascade = () => {
     }
 
     submissionStore.changeOrder(result.draggableId, source.index, destination.index);
-  }
+  };
 
   
   render() {
@@ -1029,18 +1054,20 @@ toggleCascade = () => {
   
             {/* Select box for ignoring specific sites */}
             {!this.state.applyCascadeToAllSites && (
-              <Select<string[]>
-              mode="multiple"
-              placeholder="Select sites to ignore"
-              style={{ width: '100%', marginTop: '10px' }}
-              onChange={(selectedSites) => this.setState({ ignoreSites: selectedSites })}
-            >
-              {sites.map(site => (
-                <Select.Option key={site} value={site}>
-                  {site}
-                </Select.Option>
-              ))}
-            </Select>            
+              <Select
+                mode="multiple"
+                placeholder="Select sites to ignore"
+                style={{ width: '100%', marginTop: '10px' }}
+                onChange={this.handleIgnoreSitesChange}
+                value={this.state.ignoreSites}
+              >
+                {sites.map(site => (
+                  // FIX: Use Select.Option
+                  <Select.Option key={site} value={site}>
+                    {site}
+                  </Select.Option>
+                ))}
+              </Select>
             )}
           </>
         )}
@@ -1055,7 +1082,7 @@ toggleCascade = () => {
         </div>
         
         <div>
-          <DragDropContext onDragEnd={this.onDragEnd.bind(this)}>
+          <DragDropContext onDragEnd={this.onDragEnd}>
             <Droppable droppableId="submissions">
               {provided => (
                 <div ref={provided.innerRef} {...provided.droppableProps}>
@@ -1135,7 +1162,13 @@ toggleCascade = () => {
                           >
                             Schedule Many
                           </Button>
-
+                          <Button
+                            type="default"
+                            className="mr-1"
+                            onClick={() => this.setState({ settingsModalVisible: true })}
+                          >
+                            Settings
+                          </Button>
                           <Button
                             type="primary"
                             onClick={() => this.setState({ postModalVisible: true })}
@@ -1155,7 +1188,7 @@ toggleCascade = () => {
                             SubmissionType.FILE
                           )}
                           onClose={() => this.setState({ deleteModalVisible: false })}
-                          onOk={this.deleteSubmissions.bind(this)}
+                          onOk={this.deleteSubmissions}
                           ignorePosting={true}
                           ignoreScheduled={true}
                         />
@@ -1173,7 +1206,7 @@ toggleCascade = () => {
                           // When user closes without selecting
                           onClose={() => this.setState({ autoTagSelectModalVisible: false })}
                           // When user confirms selection
-                          onOk={this.handleAutoTagSubmissions.bind(this)}
+                          onOk={this.handleAutoTagSubmissions}
                           ignorePosting={true}
                           ignoreScheduled={true}
                         >
@@ -1195,7 +1228,7 @@ toggleCascade = () => {
                             SubmissionType.FILE
                           )}
                           onClose={() => this.setState({ postModalVisible: false })}
-                          onOk={this.postSubmissions.bind(this)}
+                          onOk={this.postSubmissions}
                           ignorePosting={true}
                           ignoreScheduled={true}
                         >
@@ -1250,7 +1283,7 @@ toggleCascade = () => {
                       ignorePosting={true}
                       ignoreScheduled={true}
                       onClose={() => this.setState({ scheduleManyModalVisible: false })}
-                      onOk={this.scheduleSubmissions.bind(this)}
+                      onOk={this.scheduleSubmissions}
                       below={
                         <Form layout="vertical">
                           <Form.Item label="Starting At" required>
@@ -1329,6 +1362,22 @@ toggleCascade = () => {
           </Droppable>
         </DragDropContext>
       </div>
+      <Modal
+          title="Settings"
+          visible={this.state.settingsModalVisible}
+          onOk={this.handleSaveSettings}
+          onCancel={() => this.setState({ settingsModalVisible: false })}
+        >
+          <Form layout="vertical">
+            <Form.Item label="AI Title Generator URL" help="The full URL to the title generation service.">
+              <Input
+                value={this.state.titleGeneratorUrl}
+                onChange={e => this.setState({ titleGeneratorUrl: e.target.value })}
+                placeholder="http://127.0.0.1:37914/generate"
+              />
+            </Form.Item>
+          </Form>
+        </Modal>
       {this.renderAutoTagModal()}
       </>
   );

@@ -1,34 +1,50 @@
 // File: electron-app/src/server/tag-validation/tag-validation.controller.ts
 
-import { Controller, Post, Body } from '@nestjs/common';
+import { Controller, Post, Body, Logger } from '@nestjs/common';
 import { TagValidationService, SiteTagValidation } from './tag-validation.service';
+import { IsArray, IsString } from 'class-validator';
 
-@Controller('tag-validation')
+export class ValidateTagsDto {
+  @IsArray()
+  @IsString({ each: true })
+  tags: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  sites: string[];
+}
+
+@Controller('api/tag-validation')
 export class TagValidationController {
+  private readonly logger = new Logger(TagValidationController.name);
+
   constructor(private readonly tagValidation: TagValidationService) {}
 
   @Post('validate-for-sites')
   async validateTagsForSites(
-    @Body() body: { tags: string[]; sites: string[] }
+    @Body() body: ValidateTagsDto
   ): Promise<{ validations: SiteTagValidation[] }> {
-    console.log('[TagValidation] Received request:', {
-      tags: body.tags,
-      sites: body.sites
-    });
+    this.logger.log('--- ENTERING validateTagsForSites ---');
+    this.logger.log(`Received body: ${JSON.stringify(body)}`);
+    
+    if (!body || !body.tags || !body.sites) {
+        this.logger.warn('Invalid body received.');
+        return { validations: [] };
+    }
     
     try {
+      this.logger.log('Calling TagValidationService...');
       const results = await Promise.all(
         body.sites.map(site => 
           this.tagValidation.validateTagsForSite(body.tags, site)
         )
       );
       
-      console.log('[TagValidation] Returning results:', results);
+      this.logger.log(`Service returned results: ${JSON.stringify(results)}`);
       
       return { validations: results };
     } catch (error) {
-      console.error('[TagValidation] Error:', error);
-      // Return empty validations on error
+      this.logger.error('--- ERROR in validateTagsForSites ---', error.stack);
       return { 
         validations: body.sites.map(site => ({
           site,
@@ -36,6 +52,8 @@ export class TagValidationController {
           discardedTags: []
         }))
       };
+    } finally {
+        this.logger.log('--- EXITING validateTagsForSites ---');
     }
   }
 }

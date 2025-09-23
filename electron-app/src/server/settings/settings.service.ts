@@ -30,7 +30,7 @@ export class SettingsService {
       });
     }
 
-    this.settings.set(setting, value).write();
+    this.settings.set(String(setting), value).write();
     this.eventEmitter.emit(Events.SettingEvent.UPDATED, this.settings.getState());
   }
 }

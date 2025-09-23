@@ -1,12 +1,11 @@
-// File: electron-app/src/server/tag-validation/tag-validation.module.ts
-
-import { Module, HttpModule } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TagValidationService } from './tag-validation.service';
 import { TagValidationController } from './tag-validation.controller';
+import { TestController } from './test.controller';
 
 @Module({
-  imports: [HttpModule],
-  controllers: [TagValidationController],
+  imports: [],
+  controllers: [],
   providers: [TagValidationService],
   exports: [TagValidationService]
 })

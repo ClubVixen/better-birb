@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 /* tslint:disable: no-console no-var-requires variable-name */
 import { clipboard, dialog, shell, session, app, getCurrentWindow } from '@electron/remote';
 import { ipcRenderer } from 'electron';
@@ -9,7 +11,7 @@ const _setImmediate = setImmediate;
 const _clearImmediate = clearImmediate;
 const _Buffer = Buffer;
 
-process.once('loaded', () => {
+(process as NodeJS.Process).once('loaded', () => {
   global.setImmediate = _setImmediate;
   global.clearImmediate = _clearImmediate;
   global.Buffer = _Buffer;
@@ -61,10 +63,16 @@ process.once('loaded', () => {
   },
 };
 
-// Provide AI Tagger methods for your renderer
+// Provide AI Tagger methods for renderer
 (window as any).aiTaggerApi = {
   autoTagImage: (imagePath: string) =>
     ipcRenderer.invoke('autoTaggingRequest', imagePath),
   generateTitle: (imagePath: string, tags: string[], rating: string) =>
     ipcRenderer.invoke('generateTitleRequest', { imagePath, tags, rating: rating }),
+};
+
+// Provide Tag Validator methods for renderer
+(window as any).tagValidatorApi = {
+  validateTags: (tags: string[], sites: string[]) =>
+    ipcRenderer.invoke('validateTagsRequest', { tags, sites }),
 };

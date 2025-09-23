@@ -1,3 +1,4 @@
+
 import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, ClassSerializerInterceptor } from '@nestjs/common';
@@ -20,6 +21,7 @@ async function bootstrap() {
     },
     logger,
   });
+
   app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
   app.useGlobalGuards(new AuthGuard());
   app.useGlobalPipes(new ValidationPipe());
@@ -38,8 +40,8 @@ async function bootstrap() {
   await app.listen(process.env.PORT);
 }
 
-process.on('uncaughtException', err => logger.error(err.message, err.stack, 'Uncaught Exception'));
-process.on('unhandledRejection', (err: any) =>
+(process as NodeJS.Process).on('uncaughtException', err => logger.error(err.message, err.stack, 'Uncaught Exception'));
+(process as NodeJS.Process).on('unhandledRejection', (err: any) =>
   logger.error(err.message, err.stack, 'Unhandled Rejection'),
 );
 

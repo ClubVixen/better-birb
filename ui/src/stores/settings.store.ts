@@ -20,6 +20,7 @@ export class SettingsStore {
     defaultTagSearchProvider: 'none',
     proxy: '',
     quitOnClose: false,
+    titleGeneratorUrl: '127.0.0.1:37914',
   };
 
   constructor() {

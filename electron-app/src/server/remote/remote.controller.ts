@@ -1,13 +1,14 @@
 import { Controller, Post, Body, Get, Res, Query } from '@nestjs/common';
 import { RemoteService } from './remote.service';
 import { Response } from 'express';
+import type { Cookie } from 'electron';
 
 @Controller('remote')
 export class RemoteController {
   constructor(private readonly service: RemoteService) {}
 
   @Post('updateCookies')
-  async updateCookies(@Body() body: { accountId: string; cookies: Electron.Cookie[] }) {
+  async updateCookies(@Body() body: { accountId: string; cookies: Cookie[] }) {
     return this.service.updateCookies(body.accountId, body.cookies);
   }
 

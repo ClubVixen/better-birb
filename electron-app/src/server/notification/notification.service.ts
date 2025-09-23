@@ -5,6 +5,7 @@ import PostyBirbNotificationEntity from './models/postybirb-notification.entity'
 import { Events } from 'postybirb-commons';
 import { PostyBirbNotification } from 'postybirb-commons';
 import { Notification } from 'electron';
+import type { NativeImage } from 'electron';
 import { SettingsService } from 'src/server/settings/settings.service';
 
 @Injectable()
@@ -28,7 +29,7 @@ export class NotificationService {
     return this.repository.find();
   }
 
-  async create(notification: Partial<PostyBirbNotification>, icon?: string | Electron.NativeImage) {
+  async create(notification: Partial<PostyBirbNotification>, icon?: string | NativeImage) {
     const entity = new PostyBirbNotificationEntity(notification);
     await this.repository.save(entity);
     this.eventEmitter.emitOnComplete(Events.NotificationEvent.UPDATE, this.getAll());
@@ -37,7 +38,7 @@ export class NotificationService {
 
   emitSystemNotification(
     notification: PostyBirbNotification,
-    icon?: string | Electron.NativeImage,
+    icon?: string | NativeImage,
   ) {
     if (Notification.isSupported() && !global.SERVER_ONLY_MODE && !process.env.TEST) {
       const { title, body } = notification;
