@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as _ from 'lodash';
 import * as request from 'request';
-import Twitter, { AccessTokenResponse, TokenResponse, TwitterOptions } from 'twitter-lite';
+import Twitter, { AccessTokenResponse, TwitterOptions } from 'twitter-lite';
 import {
   ContentBlurType,
   ESensitiveMediaWarnings_Utils,
@@ -41,10 +41,16 @@ interface SendTweetV2Params {
   text?: string;
 }
 
+interface TwitterOAuth {
+  consumer_key: string;
+  consumer_secret: string;
+  token: string;
+  token_secret: string;
+}
+
 @Injectable()
 export class TwitterAPIService {
   private readonly logger = new Logger(TwitterAPIService.name);
-  
   private readonly MAX_FILE_CHUNK: number = 5 * 1024 * 1024;
 
   private getClient(apiKeys: ApiData, token?: any, version?: string) {
@@ -98,46 +104,53 @@ export class TwitterAPIService {
   async post(
     apiKeys: ApiData,
     data: SubmissionPost<{ contentBlur: ContentBlurType }>,
-    replyToId?: string
+    replyToId?: string,
   ): Promise<ApiResponse<{ url: string; id?: string }>> {
     const client = this.getClient(apiKeys, {
       oauth_token: data.token,
       oauth_token_secret: data.secret,
     });
 
+    const tokens = client['token'];
+    const oauth: TwitterOAuth = {
+      consumer_key: apiKeys.key,
+      consumer_secret: apiKeys.secret,
+      token: tokens.key,
+      token_secret: tokens.secret,
+    };
+
     const tweets: SendTweetV2Params[] = [];
     const tweet: SendTweetV2Params = {
       text: data.description || '',
-      // possibly_sensitive: data.rating !== 'general',
     };
-    // If replying to an existing tweet
+
     if (replyToId) {
       tweet.reply = { in_reply_to_tweet_id: replyToId };
     }
 
-    tweet.text = (tweet?.text || '');
+    tweet.text = tweet?.text || '';
 
     let mediaIds = [];
     if (data.files.length) {
-      // File submissions
       try {
         mediaIds = await Promise.all(
-          data.getFilesforPost().map(file => this.uploadMedia(apiKeys, client, file)),
+          data.getFilesforPost().map(file => this.uploadMedia(oauth, file)),
         );
 
-        // Get Twitter warning tag
         const twitterSMW =
           ESensitiveMediaWarnings_Utils.getSMWFromContentBlur(data?.options?.contentBlur) ??
           undefined;
-        // And apply it if any
-        if (twitterSMW)
+        if (twitterSMW) {
           await Promise.all(
-            mediaIds.map(mediaIdIter => {
-              const mediaMdBody: ImediaMetadataBody = { media_id: mediaIdIter };
-              mediaMdBody.sensitive_media_warning = [twitterSMW];
-              return client.post('media/metadata/create', mediaMdBody);
+            mediaIds.map(mediaId => {
+              const mediaMdBody: ImediaMetadataBody = {
+                media_id: mediaId,
+                sensitive_media_warning: [twitterSMW],
+              };
+              return this.createMediaMetadata(oauth, mediaMdBody);
             }),
           );
+        }
       } catch (err) {
         this.logger.error(err, err.stack, 'Failed to upload files to Twitter');
         return new ApiResponse({
@@ -167,36 +180,28 @@ export class TwitterAPIService {
 
     try {
       let url: string = '';
-    let replyId: string | undefined; 
+      let currentReplyId: string | undefined;
       for (const t of tweets) {
-        if (replyId) {
+        if (currentReplyId) {
           t.reply = {
-            in_reply_to_tweet_id: replyId,
+            in_reply_to_tweet_id: currentReplyId,
           };
         }
-        const tokens = client['token'];
-
-        const oauth = {
-          consumer_key: apiKeys.key,
-          consumer_secret: apiKeys.secret,
-          token: tokens.key,
-          token_secret: tokens.secret,
-        };
         const post = await this.postTweet(t, oauth);
-        const postedId = post.data?.id ?? post.id_str;
+        const postedId = post.data?.id;
         const me = await this.getAuthenticatedUser(oauth);
         this.logger.debug(`Raw Tweet Response from Twitter:\n${JSON.stringify(post, null, 2)}`);
         this.logger.debug(`Parsed tweet ID: ${postedId}`);
         if (!url) {
           url = `https://twitter.com/${me.data.username}/status/${postedId}`;
         }
-        replyId = postedId; // for next iteration
+        currentReplyId = postedId;
       }
 
       return new ApiResponse({
         data: {
           url,
-          id: replyId,
+          id: currentReplyId,
         },
       });
     } catch (err) {
@@ -248,99 +253,165 @@ export class TwitterAPIService {
     });
   }
 
-  private async uploadMedia(apiKeys: ApiData, client: Twitter, file: RequestFile): Promise<string> {
-    const init = {
-      command: 'INIT',
-      media_type: file.options.contentType,
-      total_bytes: file.value.length,
-      media_category: 'tweet_image',
-    };
+  private createMediaMetadata(oauth: any, body: ImediaMetadataBody): Promise<any> {
+    const url = 'https://upload.twitter.com/1.1/media/metadata/create.json';
+    this.logger.debug(`[Media Metadata] Posting to ${url} with body: ${JSON.stringify(body)}`);
 
-    if (file.options.contentType === 'image/gif') {
-      init.media_category = 'tweet_gif';
-    } else if (!file.options.contentType.includes('image')) {
-      // Assume video type
-      init.media_category = 'tweet_video';
-    }
-
-    const url = 'https://upload.twitter.com/1.1/media/upload.json';
-    const tokens = client['token'];
-
-    const oauth = {
-      consumer_key: apiKeys.key,
-      consumer_secret: apiKeys.secret,
-      token: tokens.key,
-      token_secret: tokens.secret,
-    };
-
-    const mediaData: any = await new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       request.post(
         url,
         {
-          json: true,
-          form: init,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
           oauth,
         },
-        (err, res, body) => {
-          if (body && body.errors) {
-            reject(body.errors);
-          } else {
-            resolve(body);
+        (err, res, responseBody) => {
+          if (err) {
+            this.logger.error('[Media Metadata] Request error', err);
+            return reject(err);
           }
+
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            this.logger.debug(`[Media Metadata] Success with status ${res.statusCode}`);
+            return resolve(responseBody);
+          }
+
+          this.logger.error(
+            `[Media Metadata] Error response. Status: ${res.statusCode}, Body: ${responseBody}`,
+          );
+          let parsedBody;
+          try {
+            parsedBody = JSON.parse(responseBody);
+          } catch (e) {
+            parsedBody = { errors: [{ message: responseBody || `HTTP ${res.statusCode}` }] };
+          }
+
+          const errorMessages = (parsedBody.errors || [])
+            .map((e: any) => e.message)
+            .join('; ');
+          reject(
+            new Error(
+              errorMessages || `Failed to create media metadata, status code: ${res.statusCode}`,
+            ),
+          );
         },
       );
     });
+  }
+
+  private async uploadMedia(oauth: TwitterOAuth, file: RequestFile): Promise<string> {
+    let mediaCategory = 'tweet_image';
+    if (file.options.contentType === 'image/gif') {
+      mediaCategory = 'tweet_gif';
+    } else if (!file.options.contentType.includes('image')) {
+      mediaCategory = 'tweet_video';
+    }
+
+    const initForm = {
+      command: 'INIT',
+      media_type: file.options.contentType,
+      total_bytes: file.value.length,
+      media_category: mediaCategory,
+    };
+
+    const mediaData: any = await this.performUploadRequest(oauth, { form: initForm });
 
     const { media_id_string } = mediaData;
     const chunks = _.chunk(file.value, this.MAX_FILE_CHUNK);
     await Promise.all(
-      chunks.map((chunk, i) => this.uploadChunk(oauth, media_id_string, Buffer.from(chunk), i)),
+      chunks.map((chunk, i) =>
+        this.performUploadRequest(oauth, {
+          formData: {
+            command: 'APPEND',
+            media_id: media_id_string,
+            media_data: Buffer.from(chunk).toString('base64'),
+            segment_index: i,
+          },
+        }),
+      ),
     );
 
-    await new Promise((resolve, reject) => {
-      request.post(
-        url,
-        {
-          form: {
-            command: 'FINALIZE',
-            media_id: media_id_string,
-          },
-          json: true,
-          oauth,
-        },
-        (err, res, body) => {
-          if (body && body.errors) {
-            reject(body.errors);
-          } else {
-            resolve(body);
-          }
-        },
-      );
+    const finalizeResponse = await this.performUploadRequest(oauth, {
+      form: {
+        command: 'FINALIZE',
+        media_id: media_id_string,
+      },
     });
+
+    if (finalizeResponse && finalizeResponse.processing_info) {
+      await this.waitForMediaProcessing(oauth, media_id_string);
+    }
 
     return media_id_string;
   }
 
-  private uploadChunk(oauth: any, id: string, chunk: Buffer, index: number): Promise<any> {
+  private async waitForMediaProcessing(oauth: TwitterOAuth, mediaId: string): Promise<void> {
+    let processing = true;
+    let attempts = 0;
+    const maxAttempts = 20;
+
+    while (processing && attempts < maxAttempts) {
+      attempts++;
+      const statusResponse = await this.checkMediaStatus(oauth, mediaId, attempts);
+      const processingInfo = statusResponse.processing_info;
+
+      if (!processingInfo || processingInfo.state === 'succeeded') {
+        processing = false;
+      } else if (processingInfo.state === 'failed') {
+        const errorMessage = processingInfo.error?.message || 'Unknown processing error';
+        throw new Error(`Media processing failed: ${errorMessage}`);
+      } else {
+        const waitTime = (processingInfo.check_after_secs || 5) * 1000;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
+
+    if (attempts >= maxAttempts) {
+      throw new Error(`Media processing timed out after ${maxAttempts} attempts`);
+    }
+  }
+
+  private checkMediaStatus(oauth: TwitterOAuth, mediaId: string, attempt: number): Promise<any> {
+    this.logger.debug(`[Media Status] Checking status for ${mediaId} (attempt ${attempt})`);
+    return this.performUploadRequest(
+      oauth,
+      {
+        qs: {
+          command: 'STATUS',
+          media_id: mediaId,
+        },
+      },
+      'get',
+    );
+  }
+
+  private performUploadRequest(
+    oauth: TwitterOAuth,
+    options: request.CoreOptions,
+    method: 'post' | 'get' = 'post',
+  ): Promise<any> {
+    const url = 'https://upload.twitter.com/1.1/media/upload.json';
     return new Promise((resolve, reject) => {
-      request.post(
-        'https://upload.twitter.com/1.1/media/upload.json',
+      request[method](
+        url,
         {
-          formData: {
-            command: 'APPEND',
-            media_id: id,
-            media_data: chunk.toString('base64'),
-            segment_index: index,
-          },
-          json: true,
+          ...options,
           oauth,
         },
         (err, res, body) => {
-          if (body && body.errors) {
-            reject(body.errors);
-          } else {
-            resolve(body);
+          if (err) return reject(err);
+          let parsedBody = body;
+          try {
+            parsedBody = JSON.parse(body);
+          } catch (e) {
+            // Ignore if body is not JSON
           }
+          if (parsedBody && parsedBody.errors) return reject(parsedBody.errors);
+          if (res.statusCode < 200 || res.statusCode >= 300)
+            return reject(
+              new Error(`Request failed with status code ${res.statusCode}: ${body}`),
+            );
+          resolve(parsedBody);
         },
       );
     });
