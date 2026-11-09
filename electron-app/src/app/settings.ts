@@ -26,6 +26,10 @@ const settingDefaults = {
   proxy: '',
   quitOnClose: false,
   titleGeneratorUrl: 'http://127.0.0.1:37913/generate',
+  qwenVlUrl: 'http://127.0.0.1:8000/v1/chat/completions',
+  qwenVlModel: 'Qwen2.5-VL-72B-Instruct-AWQ',
+  titleLlmUrl: 'http://127.0.0.1:5000/v1/chat/completions',
+  titleLlmModel: 'models--ReadyArt--Forgotten-Safeword-12B-v4.0',
 };
 settings.defaults(settingDefaults).write();
 

@@ -67,6 +67,7 @@ interface State {
   ignoreSites: string[];
   affectedSubmissions: ExtendedSubmissionPackage[];
   autoTagSelectModalVisible: boolean;
+  autoTitleSelectModalVisible: boolean;
   tagValidationData: TagValidationData;
   autoTagProgress: { current: number; total: number } | null;
   affectedImages: Array<{
@@ -96,6 +97,10 @@ interface State {
   };
   settingsModalVisible?: boolean;
   titleGeneratorUrl?: string;
+  qwenVlUrl?: string;
+  qwenVlModel?: string;
+  titleLlmUrl?: string;
+  titleLlmModel?: string;
 }
 const ratingMap = {
   'Safe': SubmissionRating.GENERAL,
@@ -120,6 +125,7 @@ export class EditableSubmissions extends React.Component<Props, State> {
       autoTagProgress: null,
       showAffectedImagesModal: false,
       autoTagSelectModalVisible: false,
+      autoTitleSelectModalVisible: false,
       scheduleManyPeriod: {
         d: 0,
         h: 0,
@@ -130,6 +136,10 @@ export class EditableSubmissions extends React.Component<Props, State> {
       autoTaggingResults: {},
       settingsModalVisible: false,
       titleGeneratorUrl: '',
+      qwenVlUrl: 'http://127.0.0.1:8000/v1/chat/completions',
+      qwenVlModel: 'Qwen2.5-VL-72B-Instruct-AWQ',
+      titleLlmUrl: 'http://127.0.0.1:5000/v1/chat/completions',
+      titleLlmModel: 'models--ReadyArt--Forgotten-Safeword-12B-v4.0',
     };
   }
 
@@ -139,13 +149,23 @@ export class EditableSubmissions extends React.Component<Props, State> {
   
   loadSettings = () => {
     SettingsService.getSettings().then(({ data }) => {
-      this.setState({ titleGeneratorUrl: data.titleGeneratorUrl || '' });
+      this.setState({
+        titleGeneratorUrl: data.titleGeneratorUrl || '',
+        qwenVlUrl: data.qwenVlUrl || 'http://127.0.0.1:8000/v1/chat/completions',
+        qwenVlModel: data.qwenVlModel || 'Qwen2.5-VL-72B-Instruct-AWQ',
+        titleLlmUrl: data.titleLlmUrl || 'http://127.0.0.1:5000/v1/chat/completions',
+        titleLlmModel: data.titleLlmModel || 'models--ReadyArt--Forgotten-Safeword-12B-v4.0',
+      });
     });
   };
   
   handleSaveSettings = () => {
-    SettingsService.updateSetting('titleGeneratorUrl', this.state.titleGeneratorUrl);
-    message.success('Settings saved. The new URL will be used for future requests.');
+    if (this.state.titleGeneratorUrl !== undefined) SettingsService.updateSetting('titleGeneratorUrl', this.state.titleGeneratorUrl);
+    if (this.state.qwenVlUrl !== undefined) SettingsService.updateSetting('qwenVlUrl', this.state.qwenVlUrl);
+    if (this.state.qwenVlModel !== undefined) SettingsService.updateSetting('qwenVlModel', this.state.qwenVlModel);
+    if (this.state.titleLlmUrl !== undefined) SettingsService.updateSetting('titleLlmUrl', this.state.titleLlmUrl);
+    if (this.state.titleLlmModel !== undefined) SettingsService.updateSetting('titleLlmModel', this.state.titleLlmModel);
+    message.success('Settings saved. The new URLs and models will be used for future requests.');
     this.setState({ settingsModalVisible: false });
   };
 
@@ -395,6 +415,102 @@ handleAutoTagSubmissions = async (submissions: SubmissionPackage<any>[]) => {
     tagValidationData 
   });
 };
+
+handleAutoTitleSubmissions = async (submissions: SubmissionPackage<any>[]) => {
+  this.setState({ autoTitleSelectModalVisible: false });
+
+  const fileSubs = this.generateAffectedFileSubmissions(submissions);
+  this.setState({ 
+    autoTagProgress: { current: 0, total: fileSubs.length } 
+  });
+
+  for (let i = 0; i < fileSubs.length; i++) {
+    const s = fileSubs[i];
+    const subId = s.submission._id;
+    const primary = (s.submission as any).primary;
+    if (!primary || !primary.location) continue;
+    const imagePath = primary.location;
+
+    let existingTags: string[] = [];
+    let existingRating = 'General';
+
+    if (this.state.autoTaggingResults[subId]?.tags?.length) {
+      existingTags = this.state.autoTaggingResults[subId].tags;
+      existingRating = this.state.autoTaggingResults[subId].rating || 'General';
+    } else {
+      const defaultPart = (s.parts as any).default || Object.values(s.parts || {}).find((p: any) => p.isDefault) || Object.values(s.parts || {})[0];
+      const tagsObj = (defaultPart as any)?.data?.tags;
+      if (Array.isArray(tagsObj)) {
+        existingTags = tagsObj;
+      } else if (tagsObj?.value && Array.isArray(tagsObj.value)) {
+        existingTags = tagsObj.value;
+      } else if (typeof tagsObj === 'object' && tagsObj !== null) {
+        existingTags = Object.values(tagsObj).filter(v => typeof v === 'string') as string[];
+      }
+      const ratingVal = (defaultPart as any)?.data?.rating;
+      if (typeof ratingVal === 'string') existingRating = ratingVal;
+    }
+
+    try {
+      const newTitle = await getImageTitle(imagePath, existingTags, existingRating);
+
+      // Update submission in backend
+      const partsEntries = Object.entries(s.parts);
+      const updatedEntries = partsEntries.map(([key, part]) => {
+        if ((part as any).isDefault) {
+          const updatedData = {
+            ...((part as any).data || {}),
+            title: newTitle
+          };
+          return [key, { ...(part as any), data: updatedData }] as const;
+        }
+        return [key, part] as const;
+      });
+      const updatedParts = Object.fromEntries(updatedEntries);
+      const update = {
+        id: subId,
+        parts: Object.values(updatedParts),
+        removedParts: [],
+        altTexts: {}
+      };
+      await SubmissionService.updateSubmission(update);
+
+      this.setState((prev) => ({
+        autoTaggingResults: {
+          ...prev.autoTaggingResults,
+          [subId]: {
+            ...(prev.autoTaggingResults[subId] || { tags: existingTags, rating: existingRating }),
+            title: newTitle
+          }
+        },
+        autoTaggingEdits: {
+          ...(prev.autoTaggingEdits || {}),
+          [subId]: {
+            ...((prev.autoTaggingEdits && prev.autoTaggingEdits[subId]) || { tags: existingTags, rating: existingRating }),
+            title: newTitle
+          }
+        }
+      }));
+    } catch (err) {
+      console.error(`Failed to generate title for sub ${subId}`, err);
+    }
+
+    this.setState((prev) => {
+      if (!prev.autoTagProgress) return null;
+      const { current, total } = prev.autoTagProgress;
+      return {
+        autoTagProgress: {
+          current: current + 1,
+          total
+        }
+      } as Pick<State, 'autoTagProgress'>;
+    });
+  }
+
+  this.setState({ autoTagProgress: null });
+  message.success('Titles generated for selected submissions!');
+};
+
 handleReAddDiscardedTag = (submissionId: string, site: string, tag: string) => {
   this.setState(prev => {
     const newValidationData = { ...prev.tagValidationData };
@@ -1139,6 +1255,17 @@ toggleCascade = () => {
                             >
                               Auto-Tag Many
                             </Button>
+                            <Button
+                              type="primary"
+                              className="mr-1"
+                              onClick={() => {
+                                console.log('Auto-Title Many button clicked');
+                                this.setState({ autoTitleSelectModalVisible: true });
+                              }}
+                              disabled={!submissions.length}
+                            >
+                              Auto-Title Many
+                            </Button>
 
                           <Button
                             className="mr-1"
@@ -1211,6 +1338,24 @@ toggleCascade = () => {
                           ignoreScheduled={true}
                         >
                           <p>Select which submissions you want to auto-tag.</p>
+                        </SubmissionSelectModal>
+                        <SubmissionSelectModal
+                          visible={this.state.autoTitleSelectModalVisible}
+                          validOnly={true}
+                          title="Auto-Title"
+                          multiple={true}
+                          selectAll={true}
+                          submissionType={_.get(
+                            this.props.submissions[0],
+                            'submission.type',
+                            SubmissionType.FILE
+                          )}
+                          onClose={() => this.setState({ autoTitleSelectModalVisible: false })}
+                          onOk={this.handleAutoTitleSubmissions}
+                          ignorePosting={true}
+                          ignoreScheduled={true}
+                        >
+                          <p>Select which submissions you want to auto-title using their existing tags.</p>
                         </SubmissionSelectModal>
 
 
@@ -1369,11 +1514,39 @@ toggleCascade = () => {
           onCancel={() => this.setState({ settingsModalVisible: false })}
         >
           <Form layout="vertical">
-            <Form.Item label="AI Title Generator URL" help="The full URL to the title generation service.">
+            <Form.Item label="AI Title Generator URL" help="Legacy / fallback full URL to the title generation service.">
               <Input
                 value={this.state.titleGeneratorUrl}
                 onChange={e => this.setState({ titleGeneratorUrl: e.target.value })}
                 placeholder="http://127.0.0.1:37914/generate"
+              />
+            </Form.Item>
+            <Form.Item label="Qwen VL URL (Hop 1)" help="Endpoint for Qwen2.5-VL vision model (e.g., vLLM /v1/chat/completions).">
+              <Input
+                value={this.state.qwenVlUrl}
+                onChange={e => this.setState({ qwenVlUrl: e.target.value })}
+                placeholder="http://127.0.0.1:8000/v1/chat/completions"
+              />
+            </Form.Item>
+            <Form.Item label="Qwen VL Model Name (Hop 1)" help="Model identifier for Qwen2.5-VL.">
+              <Input
+                value={this.state.qwenVlModel}
+                onChange={e => this.setState({ qwenVlModel: e.target.value })}
+                placeholder="Qwen2.5-VL-72B-Instruct-AWQ"
+              />
+            </Form.Item>
+            <Form.Item label="Title LLM URL (Hop 2 - SillyTavern)" help="Endpoint for text LLM title generation (e.g., SillyTavern /v1/chat/completions).">
+              <Input
+                value={this.state.titleLlmUrl}
+                onChange={e => this.setState({ titleLlmUrl: e.target.value })}
+                placeholder="http://127.0.0.1:5000/v1/chat/completions"
+              />
+            </Form.Item>
+            <Form.Item label="Title LLM Model Name (Hop 2)" help="Model identifier for title LLM.">
+              <Input
+                value={this.state.titleLlmModel}
+                onChange={e => this.setState({ titleLlmModel: e.target.value })}
+                placeholder="models--ReadyArt--Forgotten-Safeword-12B-v4.0"
               />
             </Form.Item>
           </Form>

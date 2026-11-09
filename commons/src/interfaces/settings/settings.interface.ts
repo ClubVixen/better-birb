@@ -15,5 +15,9 @@ export interface Settings {
     proxy: string;
     quitOnClose: boolean;
     titleGeneratorUrl: string;
+    qwenVlUrl: string;
+    qwenVlModel: string;
+    titleLlmUrl: string;
+    titleLlmModel: string;
 }
 export {};
