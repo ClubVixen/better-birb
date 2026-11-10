@@ -2,7 +2,6 @@ import React from 'react';
 import './AppLayout.css';
 import '../../services/ui-notification.service';
 import AppHeader from '../app-header/AppHeader';
-import AppUpdate from '../update/AppUpdate';
 import RandomMessages from '../random-messages/RandomMessages';
 import DescriptionTemplates from '../description-templates/DescriptionTemplates';
 import Home from '../home/Home';
@@ -179,9 +178,6 @@ export default class AppLayout extends React.Component<Props, State> {
                   <span className="text-xs">{window.appVersion}</span>
                 </div>
               </Link>
-              <div className="update-container text-center mx-1">
-                <AppUpdate />
-              </div>
             </div>
 
             <Menu

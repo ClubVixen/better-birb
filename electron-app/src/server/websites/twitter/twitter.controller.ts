@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Post, Query } from '@nestjs/common';
 import { SubmissionPost } from './models/submission-post.model';
 import { TwitterAuthorization } from './models/twitter-authorization.model';
 import { TwitterAPIService } from './twitter-api.service';
@@ -7,8 +7,8 @@ import { TwitterAPIService } from './twitter-api.service';
 export class TwitterController {
   constructor(private readonly service: TwitterAPIService) {}
 
-  @Get('v2/authorize')
-  startAuthorization(@Query() data: { key: string; secret: string }) {
+  @Post('v2/authorize/start')
+  startAuthorization(@Body() data: { key: string; secret: string }) {
     return this.service.startAuthorization(data);
   }
 

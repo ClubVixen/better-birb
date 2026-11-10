@@ -13,7 +13,6 @@ import { ParserModule } from '../parser/parser.module';
 @Module({
   imports: [
     forwardRef(() => SubmissionModule),
-    SubmissionModule,
     SettingsModule,
     AccountModule,
     WebsitesModule,

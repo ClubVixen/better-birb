@@ -16,7 +16,6 @@ import {
   message,
 } from 'antd';
 import { UIStore } from '../../stores/ui.store';
-import UpdateService from '../../services/update.service';
 import RemoteService from '../../services/remote.service';
 
 interface Props {
@@ -325,11 +324,6 @@ export default class SettingsView extends React.Component<Props> {
                   this.updateSetting('proxy', target.value);
                 }}
               />
-            </Form.Item>
-          </Collapse.Panel>
-          <Collapse.Panel header="Updates" key="updates">
-            <Form.Item>
-              <Button onClick={() => UpdateService.checkForUpdates()}>Check for updates</Button>
             </Form.Item>
           </Collapse.Panel>
         </Collapse>

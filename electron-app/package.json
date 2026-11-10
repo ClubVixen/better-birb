@@ -133,11 +133,7 @@
   "build": {
     "appId": "com.lemonynade.postybirb.plus",
     "productName": "PostyBirb+",
-    "publish": {
-      "provider": "github",
-      "owner": "mvdicarlo",
-      "repo": "postybirb-plus"
-    },
+    "publish": null,
     "directories": {
       "buildResources": "packaging-resources",
       "output": "release"
@@ -155,9 +151,6 @@
       "artifactName": "${productName}-${version}.${ext}",
       "icon": "icons/icon_256x256x32.png",
       "category": "Network",
-      "publish": [
-        "github"
-      ],
       "target": [
         "AppImage",
         "snap"
@@ -165,10 +158,18 @@
     },
     "nsis": {
       "artifactName": "postybirb-plus-setup-${version}.${ext}",
-      "deleteAppDataOnUninstall": true
+      "deleteAppDataOnUninstall": true,
+      "include": "packaging-resources/installer.nsh"
     },
     "win": {
       "artifactName": "postybirb-plus-${version}.${ext}",
+      "extraResources": [
+        {
+          "from": "../AiTagger",
+          "to": "AiTagger",
+          "filter": ["tagger.py", "requirements.txt"]
+        }
+      ],
       "publisherName": [
         "Michael DiCarlo"
       ],

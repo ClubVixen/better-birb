@@ -51,6 +51,7 @@ export class PostService {
   constructor(
     @Inject(forwardRef(() => SubmissionService))
     private readonly submissionService: SubmissionService,
+    @Inject(forwardRef(() => AccountService))
     private readonly accountService: AccountService,
     private readonly parserService: ParserService,
     private readonly websites: WebsiteProvider,

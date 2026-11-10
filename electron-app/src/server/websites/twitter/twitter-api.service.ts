@@ -52,6 +52,13 @@ interface TwitterOAuth {
 export class TwitterAPIService {
   private readonly logger = new Logger(TwitterAPIService.name);
   private readonly MAX_FILE_CHUNK: number = 5 * 1024 * 1024;
+  private readonly oauthUrl = 'https://api.x.com/oauth';
+  private readonly pendingAuthorizations = new Map<string, {
+    key: string;
+    secret: string;
+    expiresAt: number;
+    exchanging: boolean;
+  }>();
 
   private getClient(apiKeys: ApiData, token?: any, version?: string) {
     const config: TwitterOptions = {
@@ -70,35 +77,98 @@ export class TwitterAPIService {
   async startAuthorization(
     data: ApiData,
   ): Promise<ApiResponse<{ url: string; oauth_token: string }>> {
+    if (typeof data?.key !== 'string' || typeof data.secret !== 'string' || !data.key.trim() || !data.secret.trim()) {
+      return new ApiResponse({ error: 'Enter the X API Key and API Key Secret for your developer app.' });
+    }
+    const now = Date.now();
+    for (const [token, pending] of this.pendingAuthorizations) {
+      if (pending.expiresAt <= now) this.pendingAuthorizations.delete(token);
+    }
     try {
-      const auth = await this.getClient(data).getRequestToken('oob');
+      const key = data.key.trim();
+      const auth = await this.requestOAuthToken('request_token', {
+        consumer_key: key,
+        consumer_secret: data.secret.trim(),
+        callback: 'oob',
+      });
+      const token = auth.get('oauth_token');
+      const secret = auth.get('oauth_token_secret');
+      if (!token || !secret || auth.get('oauth_callback_confirmed') !== 'true') {
+        throw new Error('X did not return a usable request token. Check the app’s user authentication settings.');
+      }
+      this.pendingAuthorizations.set(token, {
+        key, secret, expiresAt: Date.now() + 15 * 60 * 1000, exchanging: false,
+      });
       return new ApiResponse({
         data: {
-          url: `https://api.twitter.com/oauth/authenticate?oauth_token=${
-            (auth as any).oauth_token
-          }`,
-          oauth_token: (auth as any).oauth_token,
+          url: `${this.oauthUrl}/authorize?oauth_token=${encodeURIComponent(token)}`,
+          oauth_token: token,
         },
       });
     } catch (err) {
-      this.logger.error(err, err.stack, 'Twitter Auth Start Failure');
-      return new ApiResponse({ error: err });
+      this.logger.warn(`X authorization start: ${err.message}`);
+      return new ApiResponse({ error: err.message });
     }
   }
 
   async completeAuthorization(
     data: TwitterAuthorization,
   ): Promise<ApiResponse<AccessTokenResponse>> {
-    try {
-      const auth = await this.getClient({ key: data.key, secret: data.secret }).getAccessToken({
-        oauth_token: data.oauth_token,
-        oauth_verifier: data.verifier,
-      });
-      return new ApiResponse({ data: auth });
-    } catch (err) {
-      this.logger.error(err, err.stack, 'Twitter Auth Complete Failure');
-      return new ApiResponse({ error: err });
+    const pending = this.pendingAuthorizations.get(data.oauth_token);
+    if (!pending || pending.expiresAt <= Date.now() || pending.key !== data.key.trim()) {
+      return new ApiResponse({ error: 'This authorization has expired or the API key changed. Open a new X authorization page.' });
     }
+    if (pending.exchanging) {
+      return new ApiResponse({ error: 'This PIN is already being verified.' });
+    }
+    if (!/^\d+$/.test(data.verifier.trim())) {
+      return new ApiResponse({ error: 'Enter the numeric PIN from the X authorization page.' });
+    }
+    pending.exchanging = true;
+    try {
+      const auth = await this.requestOAuthToken('access_token', {
+        consumer_key: pending.key,
+        consumer_secret: data.secret.trim(),
+        token: data.oauth_token,
+        token_secret: pending.secret,
+        verifier: data.verifier.trim(),
+      });
+      const oauth_token = auth.get('oauth_token');
+      const oauth_token_secret = auth.get('oauth_token_secret');
+      const user_id = auth.get('user_id');
+      const screen_name = auth.get('screen_name');
+      if (!oauth_token || !oauth_token_secret || !user_id || !screen_name) {
+        throw new Error('X did not return a complete access token.');
+      }
+      this.pendingAuthorizations.delete(data.oauth_token);
+      return new ApiResponse({ data: { oauth_token, oauth_token_secret, user_id, screen_name } });
+    } catch (err) {
+      this.logger.warn(`X PIN verification: ${err.message}`);
+      return new ApiResponse({ error: err.message });
+    } finally {
+      pending.exchanging = false;
+    }
+  }
+
+  private requestOAuthToken(endpoint: 'request_token' | 'access_token', oauth: request.OAuthOptions) {
+    return new Promise<URLSearchParams>((resolve, reject) => {
+      request.post(`${this.oauthUrl}/${endpoint}`, {
+        oauth,
+        timeout: 15000,
+        followRedirect: false,
+      }, (err, response, body) => {
+        if (err) return reject(new Error('Could not reach X to authorize. Check your connection and try again.'));
+        const { statusCode } = response;
+        if (statusCode === 200) return resolve(new URLSearchParams(body));
+        if (statusCode === 401 || statusCode === 403) {
+          const help = endpoint === 'request_token'
+            ? 'Check that the API Key and API Key Secret belong to the same X app, and that OAuth 1.0a user authentication is configured.'
+            : 'Check the PIN or open a new X authorization page and try again.';
+          return reject(new Error(`X rejected authorization (HTTP ${statusCode}). ${help}`));
+        }
+        reject(new Error(`X authorization failed (HTTP ${statusCode}). Try again later.`));
+      });
+    });
   }
 
   async post(

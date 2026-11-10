@@ -1,4 +1,5 @@
 pillow>=9.0.0
+pandas
 onnxruntime>=1.12.0
 huggingface-hub
 transformers==4.41.2

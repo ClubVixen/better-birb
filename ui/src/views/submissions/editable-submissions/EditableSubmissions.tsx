@@ -16,9 +16,6 @@ import { DragDropContext, Droppable, DropResult } from 'react-beautiful-dnd';
 import { NotificationSubmissionCreator } from './NotificationSubmissionCreator';
 import { FileSubmissionCreator } from './FileSubmissionCreator';
 import { Checkbox, Select,Radio } from 'antd';
-import { FormData } from 'formdata-node';
-import { fileFromPath } from 'formdata-node/file-from-path';
-import fs from 'fs'
 import { getAutoTagsNoUI } from '../../../services/AiTaggerService';
 import { getImageTitle } from '../../../services/AiTaggerService';
 import { Alert, Collapse, Tag } from 'antd';

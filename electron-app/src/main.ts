@@ -26,6 +26,11 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy');
 
+// Electron 19 can crash while Windows accessibility clients query stale hyperlinks.
+if (util.isWindows() && !app.commandLine.hasSwitch('force-renderer-accessibility')) {
+  app.commandLine.appendSwitch('disable-renderer-accessibility');
+}
+
 const portIndex = (process as NodeJS.Process).argv.findIndex((arg) => arg === '-p' || arg === '--port') + 1;
 process.env.PORT =
   portIndex && !isNaN(Number((process as NodeJS.Process).argv[portIndex]))
@@ -287,16 +292,13 @@ ipcMain.handle('autoTaggingRequest', async (event, imagePath: string) => {
   console.log('Starting autoTaggingRequest...');
 
   return new Promise((resolve, reject) => {
-   const scriptPath = path.join(__dirname, '..','..','AiTagger','tagger.py');
-   const pythonExe = path.join(__dirname, '..','..','AiTagger','venv','Scripts','python.exe');
-
-
-const basePath = path.join((process as NodeJS.Process).resourcesPath, 'AiTagger'); 
-//production paths
-//const scriptPath = path.join(basePath, 'tagger.py');
-//const pythonExe = path.join(basePath, 'venv', 'Scripts', 'python.exe');
-
+    const basePath = app.isPackaged
+      ? path.join(process.resourcesPath, 'AiTagger')
+      : path.join(__dirname, '..', '..', 'AiTagger');
+    const scriptPath = path.join(basePath, 'tagger.py');
+    const pythonExe = path.join(basePath, 'venv', 'Scripts', 'python.exe');
     const py = spawn(pythonExe, [scriptPath, imagePath]);
+    py.on('error', reject);
 
     let stdoutData = '';
     let stderrData = '';

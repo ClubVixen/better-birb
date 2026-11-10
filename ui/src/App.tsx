@@ -11,7 +11,6 @@ import { submissionStore } from './stores/submission.store';
 import { submissionTemplateStore } from './stores/submission-template.store';
 import { tagGroupStore } from './stores/tag-group.store';
 import { uiStore } from './stores/ui.store';
-import { updateStore } from './stores/update.store';
 import { postStatusStore } from './stores/post-status.store';
 import { notificationStore } from './stores/notification.store';
 import { customShortcutStore } from './stores/custom-shortcut.store';
@@ -65,7 +64,6 @@ export default class App extends React.Component {
           submissionTemplateStore={submissionTemplateStore}
           tagGroupStore={tagGroupStore}
           uiStore={uiStore}
-          updateStore={updateStore}
           postStatusStore={postStatusStore}
           notificationStore={notificationStore}
           customShortcutStore={customShortcutStore}
